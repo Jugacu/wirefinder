@@ -1,0 +1,104 @@
+import { useState } from "react";
+import { addServer } from "../api";
+import { CopyField } from "./CopyField";
+import { ImportForm } from "./ImportForm";
+import { ServerForm } from "./ServerForm";
+
+interface Props {
+  /** Called once at least one server exists. */
+  onComplete: () => void;
+}
+
+type Step =
+  | { kind: "welcome" }
+  | { kind: "import" }
+  | { kind: "manual" }
+  // After a manual add we show the generated public key to register.
+  | { kind: "registered"; name: string; publicKey: string };
+
+/**
+ * First-run flow. A "server" is a complete WireGuard tunnel, so onboarding is just
+ * "add your first one" — by importing a `.conf` (the common case) or entering it
+ * manually (self-hosted, where we generate a keypair and show you the public key).
+ */
+export function Onboarding({ onComplete }: Props) {
+  const [step, setStep] = useState<Step>({ kind: "welcome" });
+
+  return (
+    <main className="onboarding">
+      <header className="onboarding-head">
+        <Logo />
+        <h1>wirefinder</h1>
+        <p className="tagline">A calm home for your WireGuard tunnels.</p>
+      </header>
+
+      {step.kind === "welcome" && (
+        <section className="card">
+          <h2>Add your first server</h2>
+          <p className="muted">
+            A server is a complete WireGuard config. Import the <code>.conf</code> your
+            provider gave you, or enter a self-hosted one by hand.
+          </p>
+          <button className="btn primary block" onClick={() => setStep({ kind: "import" })}>
+            Import a .conf file
+          </button>
+          <button className="btn ghost block" onClick={() => setStep({ kind: "manual" })}>
+            Add manually
+          </button>
+        </section>
+      )}
+
+      {step.kind === "import" && (
+        <section className="card">
+          <h2>Import a config</h2>
+          <ImportForm onImported={onComplete} onCancel={() => setStep({ kind: "welcome" })} />
+        </section>
+      )}
+
+      {step.kind === "manual" && (
+        <section className="card">
+          <h2>Add a server</h2>
+          <p className="muted">This is the WireGuard peer you'll connect to.</p>
+          <ServerForm
+            submitLabel="Add server"
+            onCancel={() => setStep({ kind: "welcome" })}
+            onSubmit={async (spec) => {
+              const servers = await addServer(spec);
+              const me = servers.find((s) => s.name === spec.name);
+              // Generated key → show the public key to register; otherwise we're done.
+              if (me && spec.private_key === null) {
+                setStep({ kind: "registered", name: me.name, publicKey: me.public_key });
+              } else {
+                onComplete();
+              }
+            }}
+          />
+        </section>
+      )}
+
+      {step.kind === "registered" && (
+        <section className="card">
+          <h2>Register your public key</h2>
+          <p className="muted">
+            We generated a keypair for <strong>{step.name}</strong>. Add this public key to
+            that server's list of peers, then you're ready to connect.
+          </p>
+          <CopyField value={step.publicKey} />
+          <button className="btn primary block" onClick={onComplete}>
+            Done
+          </button>
+        </section>
+      )}
+    </main>
+  );
+}
+
+function Logo() {
+  return (
+    <svg className="logo" viewBox="0 0 48 48" width="44" height="44" aria-hidden>
+      <circle cx="24" cy="24" r="21" fill="none" stroke="currentColor" strokeWidth="2" opacity="0.25" />
+      <circle cx="24" cy="24" r="13" fill="none" stroke="currentColor" strokeWidth="2" opacity="0.5" />
+      <circle cx="24" cy="24" r="4.5" fill="currentColor" />
+    </svg>
+  );
+}

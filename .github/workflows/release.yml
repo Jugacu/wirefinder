@@ -1,0 +1,82 @@
+# Cut a wirefinder release.
+#
+# Triggered by pushing a version tag (e.g. `git tag v0.1.0 && git push origin v0.1.0`).
+# Unlike build.yml (throwaway per-run artifacts), this creates a permanent, versioned
+# GitHub Release with the installable package attached.
+#
+# ONE job, because we ship ONE package: it builds the daemon + CLI (cargo) AND the
+# desktop GUI (Tauri) on the same runner, then cargo-deb assembles them into a single
+# wirefinder_<version>_amd64.deb (daemon + cli + gui + systemd unit + launcher).
+# The raw binaries are attached too, for non-Debian users.
+#
+# Pinned/verified 2026-06-14.
+
+name: release
+
+on:
+  push:
+    tags:
+      - 'v*'            # v0.1.0, v1.2.3, … — semver tags only
+
+# The default GITHUB_TOKEN is read-only for contents. Creating a Release and
+# uploading assets needs write — granted here, scoped to just this workflow.
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      # The GUI links webkit/GTK at build time (same deps as build.yml's build-ui).
+      - name: Install Tauri system deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            build-essential file libssl-dev libxdo-dev patchelf
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      # Two separate Cargo workspaces → two cache entries.
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            . -> target
+            ui/src-tauri -> target
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: 10
+      - name: Install Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 20
+          cache: pnpm
+          cache-dependency-path: ui/pnpm-lock.yaml
+
+      # Build daemon + cli + gui and assemble the ONE combined .deb. This is the
+      # SAME script a developer runs locally (release/package.sh), so CI and
+      # local builds can't drift. depends="$auto" sees the real GUI binary here
+      # and pulls in its webkit/GTK runtime deps automatically.
+      - name: Build the .deb
+        run: release/package.sh
+
+      # Create the Release: the single installable .deb plus the raw binaries.
+      - name: Create the Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --title "wirefinder $GITHUB_REF_NAME" \
+            --generate-notes \
+            target/debian/*.deb \
+            target/release/wirefinderd \
+            target/release/wirefinder

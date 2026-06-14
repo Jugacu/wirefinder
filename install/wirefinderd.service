@@ -1,0 +1,56 @@
+# wirefinderd — the privileged WireGuard daemon, as a managed systemd service.
+# Install:  sudo install -Dm644 wirefinderd.service /etc/systemd/system/wirefinderd.service
+
+[Unit]
+Description=wirefinder WireGuard daemon
+Documentation=https://man7.org/linux/man-pages/man5/systemd.service.5.html
+# The tunnel interface needs the network up first.
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# No config-file argument: the daemon starts with whatever it has persisted
+# (nothing, on a fresh install) and is configured entirely over IPC by the GUI.
+ExecStart=/usr/bin/wirefinderd
+
+# Persisted state (the interface private key + servers) lives here. systemd creates
+# /var/lib/wirefinder as root:wirefinder before the daemon starts; the daemon writes
+# state.json mode 0600, so the private key stays root-only even though the group can
+# list the directory. This matches config::DEFAULT_STATE_PATH in the daemon.
+StateDirectory=wirefinder
+
+# The control socket lives in /run/wirefinder (see proto::SOCKET_PATH). systemd
+# provisions this as root:wirefinder before start; 0750 means only the wirefinder
+# group can traverse into it, so the socket is never exposed to other users even
+# for the instant before the daemon sets its mode.
+RuntimeDirectory=wirefinder
+RuntimeDirectoryMode=0750
+
+# euid stays root (creating a WireGuard interface needs CAP_NET_ADMIN), but the
+# process's *group* is `wirefinder`. The Unix socket the daemon bind()s inherits
+# the creating process's egid, so it lands as root:wirefinder with mode 0660 —
+# any user in the `wirefinder` group (your desktop login) can talk to it. systemd
+# is NOT sudo: there's no SUDO_UID here, so the dev-time chown is skipped and the
+# group is how we hand access to the unprivileged UI.
+Group=wirefinder
+
+# Stop = SIGTERM. The ctrl-c handler from lesson 8 catches SIGTERM, tears the
+# tunnel down, and removes the socket — so `systemctl stop` is a clean teardown,
+# not a yank. SIGTERM is systemd's default KillSignal; stated here for intent.
+# TimeoutStopSec gives that teardown time before systemd escalates to SIGKILL.
+KillSignal=SIGTERM
+TimeoutStopSec=10s
+
+# Restart on a crash, but not on a clean stop (a SIGTERM teardown exits 0).
+Restart=on-failure
+RestartSec=2s
+
+# Even as root: forbid privilege escalation and cap the process at the single
+# capability it actually needs. This shrinks blast radius without breaking the
+# DNS path (see the lesson's note on going fully non-root).
+NoNewPrivileges=yes
+CapabilityBoundingSet=CAP_NET_ADMIN
+
+[Install]
+WantedBy=multi-user.target

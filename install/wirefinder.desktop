@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=wirefinder
+GenericName=WireGuard switcher
+Comment=Switch between WireGuard endpoints
+Exec=wirefinder-ui
+Icon=wirefinder
+Terminal=false
+Categories=Network;Security;
+Keywords=vpn;wireguard;tunnel;

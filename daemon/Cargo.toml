@@ -1,0 +1,55 @@
+[package]
+name = "wirefinderd"
+version = "0.1.0"
+edition = "2024"
+description = "Privileged WireGuard endpoint-switching daemon"
+license.workspace = true   # Apache-2.0 (from [workspace.package])
+publish = false   # binary, not a crates.io package
+
+[dependencies]
+wirefinder-proto = { path = "../proto" }
+defguard_wireguard_rs = "0.10.0"
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.150"
+ctrlc = { version = "3.5.2", features = ["termination"] }
+
+[dev-dependencies]
+# Throwaway state files for the persistence and state-machine tests.
+tempfile = "3"
+
+# ── Debian packaging (cargo-deb) ──────────────────────────────────────────────
+# ONE product package: daemon + CLI + desktop GUI + systemd unit + launcher.
+# All packaging assets live in install/ (not scattered through the daemon crate).
+# This metadata must live in a PACKAGE manifest — cargo-deb can't read it from the
+# virtual workspace root (Cargo.toml), so the daemon (the core binary) hosts it;
+# `cargo deb -p wirefinderd` is the entry point. The GUI binary comes from a SEPARATE
+# Tauri build (ui/), so a full package needs that built first — see release/.
+[package.metadata.deb]
+name = "wirefinder"                       # the product package (daemon + cli + gui)
+maintainer = "Julian <julian@jugacu.es>"
+section = "net"
+priority = "optional"
+extended-description = """\
+wirefinder is a WireGuard endpoint switcher: a privileged daemon (wirefinderd) \
+that owns the tunnel interface, a CLI (wirefinder), and a desktop GUI — all in \
+one package. depends="$auto" picks up the GUI's webkit/GTK runtime libraries \
+from the built binary."""
+depends = "$auto"
+recommends = "openresolv"                 # the DNS path shells out to resolvconf (lesson 10)
+assets = [
+    # Daemon + CLI: built into the workspace target (target/release).
+    ["target/release/wirefinderd", "usr/bin/", "755"],
+    ["target/release/wirefinder",  "usr/bin/", "755"],
+    # Desktop GUI: built by Tauri into ITS own target; installed under a real name.
+    ["../ui/src-tauri/target/release/ui", "usr/bin/wirefinder-ui", "755"],
+    # Launcher + icon so the GUI shows up in the applications menu.
+    ["../install/wirefinder.desktop", "usr/share/applications/wirefinder.desktop", "644"],
+    ["../install/wirefinder.png", "usr/share/icons/hicolor/256x256/apps/wirefinder.png", "644"],
+]
+# Maintainer scripts + the systemd unit both live in install/. The custom postinst
+# creates the `wirefinder` group; cargo-deb injects its systemd fragments at the
+# #DEBHELPER# token. Unlike before, the daemon needs no config file to run — it
+# starts empty and is configured over IPC by the GUI — so we enable and start it
+# right away. The unit's StateDirectory= provisions /var/lib/wirefinder.
+maintainer-scripts = "../install"
+systemd-units = { unit-scripts = "../install", unit-name = "wirefinderd", enable = true, start = true }

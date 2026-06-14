@@ -1,0 +1,167 @@
+# Build wirefinder on GitHub's machines.
+#
+# On every push and pull request, GitHub builds the WHOLE product from a clean
+# checkout, in two jobs that run in parallel:
+#
+#   build      — the privileged core: the `wirefinderd` daemon + `wirefinder`
+#                CLI (the proto+daemon+cli Cargo workspace at the repo root).
+#                Uploads the two binaries as a downloadable artifact.
+#   build-ui   — the unprivileged desktop app: the Tauri (React + tray) GUI in
+#                ui/. Compiles it to PROVE it builds; does not ship it yet.
+#
+# These are the two halves of wirefinder's architecture (privileged daemon +
+# unprivileged UI), and they install differently, so they build as separate
+# jobs. Turning build-ui's output into an installer (.deb/AppImage) is the
+# later packaging lesson; today it's a compile-only gate.
+#
+# Pinned to current major versions (verified 2026-06-14):
+#   actions/checkout@v6      actions/upload-artifact@v7   dtolnay/rust-toolchain
+#   Swatinem/rust-cache@v2   actions/setup-node@v6        pnpm/action-setup@v6
+
+name: build
+
+# WHEN this runs: pushes to `main`, plus every pull request (against any branch).
+# So work on a feature branch runs CI only once it's in a PR — not on every
+# scratch push — while `main` always stays verified. Tag pushes are handled by
+# release.yml, so a `v*` tag cuts a release without a redundant run here.
+# This is the "events" half of GitHub Actions: a workflow is dormant YAML until
+# an event it listens for happens.
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+jobs:
+  build:
+    # The runner: a throwaway VM GitHub gives you, fresh every run.
+    runs-on: ubuntu-latest
+
+    steps:
+      # 1. Pull your repo onto the runner. Without this the VM is empty.
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      # 2. Install a Rust toolchain (rustc + cargo). The runner has no Rust by default.
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      # 3. Cache ~/.cargo and target/ keyed on Cargo.lock + rustc version, so the
+      #    second run doesn't recompile every dependency from scratch.
+      #    The workspace is the repo root, so cache the default `. -> target`.
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      # 4. The actual build. The workspace manifest (Cargo.toml) is at the repo
+      #    root, so cargo finds it with no extra flags.
+      - name: Build release binaries
+        run: cargo build --release
+
+      # 5. Hand the binaries back. `path` lists files (it ignores any step
+      #    working-directory — it's relative to the repo root). `if-no-files-found:
+      #    error` means a silently-renamed binary FAILS the run instead of
+      #    uploading nothing — honest CI.
+      - name: Upload binaries
+        uses: actions/upload-artifact@v7
+        with:
+          name: wirefinder-linux-x86_64
+          path: |
+            target/release/wirefinder
+            target/release/wirefinderd
+          if-no-files-found: error
+
+  # The desktop GUI. Runs in parallel with `build`. This job only proves the
+  # Tauri app COMPILES — it doesn't ship anything yet (that's the packaging
+  # lesson). The UI is its own Cargo workspace under ui/src-tauri and pulls
+  # in webkit + GTK system libs, which is why it can't ride along in `build`.
+  build-ui:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      # Tauri's Linux build dependencies (Ubuntu 24.04 → webkit2gtk 4.1). Needed
+      # to compile and link the webview and the appindicator tray. patchelf is
+      # only used by bundling, but it's cheap and keeps the env build-complete.
+      - name: Install Tauri system deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            build-essential file libssl-dev libxdo-dev patchelf
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      # ui/src-tauri is a SEPARATE Cargo workspace from the root (its own
+      # Cargo.lock), so the cache points at it specifically.
+      - name: Cache cargo (ui)
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "ui/src-tauri -> target"
+
+      # pnpm BEFORE setup-node: setup-node's pnpm cache runs `pnpm store path`,
+      # so the pnpm binary has to exist first. Versions match Julian's machine
+      # (pnpm 10, node 20).
+      - name: Install pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: 10
+      - name: Install Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 20
+          cache: pnpm
+          cache-dependency-path: ui/pnpm-lock.yaml
+
+      - name: Install frontend deps
+        working-directory: ui
+        run: pnpm install --frozen-lockfile
+
+      # Build the whole app to prove it compiles. --no-bundle skips the
+      # .deb/AppImage installer generation (deferred to the packaging lesson).
+      # tauri.conf.json's beforeBuildCommand (`pnpm build` = tsc && vite build)
+      # type-checks and bundles the frontend before the Rust compile.
+      - name: Build Tauri app (no bundle)
+        working-directory: ui
+        run: pnpm tauri build --no-bundle
+
+  # Supply-chain gate. Runs in parallel with the build jobs and reads the policy
+  # in deny.toml: security advisories, license allow-list, duplicate/forbidden
+  # crates, and crate sources. A NEW advisory or a disallowed license fails CI.
+  # We take the cargo-deny authors' own action (Docker-prebuilt, so it doesn't
+  # recompile the tool each run) and pin it — a deliberate, reviewed dependency,
+  # not a reflexive one.
+  deny:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+      - name: cargo-deny
+        uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          manifest-path: Cargo.toml
+
+  # Quality gate: is the code correct and clean, not just compilable? Three
+  # checks, each failing CI on its own: formatting, clippy lints, and tests.
+  # Runs in the root workspace (the daemon+cli+proto, no webkit needed).
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+      - name: Install Rust (with clippy + rustfmt)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt    # NOT installed by default — must be requested
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+      - name: Format check
+        run: cargo fmt --all --check                       # style: fail on any diff from rustfmt
+      - name: Clippy
+        run: cargo clippy --all-targets --workspace -- -D warnings   # idiom/correctness: warnings = failure
+      - name: Tests
+        run: cargo test --workspace                        # behaviour: the proto contract round-trip + more

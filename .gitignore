@@ -1,0 +1,37 @@
+# ── Secrets ──────────────────────────────────────────────────────────────
+# A real config holds your WireGuard private_key + preshared_key and your real
+# endpoint. NEVER commit it. Commit config.example.json instead. Match config.json
+# anywhere (daemon/, install/, …) — only the .example is tracked.
+config.json
+
+# ── Rust build artifacts ─────────────────────────────────────────────────
+# Matches target/, ui/src-tauri/target/, and any other `target/` dir.
+target/
+
+# ── JS / frontend ────────────────────────────────────────────────────────
+node_modules/
+dist/
+dist-ssr/
+*.local
+
+# ── Tauri generated ──────────────────────────────────────────────────────
+gen/schemas/
+
+# ── Logs ─────────────────────────────────────────────────────────────────
+*.log
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# ── OS / editor cruft ────────────────────────────────────────────────────
+.DS_Store
+*.swp
+*.swo
+.idea/
+.vscode/*
+!.vscode/extensions.json
+
+# NOTE: Cargo.lock IS committed on purpose — wirefinder ships binaries
+# (daemon, cli, ui), so a locked, reproducible dependency set is what CI and
+# releases build against. Do not ignore it.

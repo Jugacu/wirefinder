@@ -1,0 +1,13 @@
+[package]
+name = "wirefinder"
+version = "0.1.0"
+edition = "2024"
+license.workspace = true   # Apache-2.0 (from [workspace.package])
+publish = false   # binary, not a crates.io package
+
+[dependencies]
+wirefinder-proto = { path = "../proto" }
+
+[dev-dependencies]
+# Throwaway files for the `import` file-read test.
+tempfile = "3"

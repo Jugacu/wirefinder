@@ -1,0 +1,59 @@
+# cargo-deny configuration for wirefinder.
+#
+# Run from repo root:   cargo deny check
+# Docs:            https://embarkstudios.github.io/cargo-deny/
+#
+# Four independent checks: advisories (known vulns), licenses (legal policy),
+# bans (duplicate/forbidden crates), sources (where crates come from).
+
+[advisories]
+version = 2
+# Fails on any crate with a known RustSec advisory. When you've REVIEWED one
+# and consciously accept it, list it here with a reason — an audit trail, not
+# a silencer.
+ignore = [
+    # `paste` is unmaintained (archived by its author), NOT a vulnerability. It's
+    # a compile-time proc-macro helper pulled transitively by defguard's netlink
+    # stack (defguard_wireguard_rs → netlink-packet-core → paste). No safe upgrade
+    # exists, and it does no runtime work. Accepted; revisit if defguard drops it.
+    { id = "RUSTSEC-2024-0436", reason = "unmaintained (not a vuln); transitive via defguard; no upgrade available" },
+]
+
+[licenses]
+version = 2
+# Allow-list: every dependency's license must be one of these, or the build
+# fails. This list is exactly what wirefinder's real tree uses today — each one
+# was a conscious "yes, this is fine to ship" decision, not a blanket allow.
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Unicode-3.0",   # unicode-ident — ubiquitous; must be named explicitly
+    "MPL-2.0",        # weak (file-level) copyleft — acceptable, opted into knowingly
+    "Zlib",
+    "Unlicense",
+]
+confidence-threshold = 0.9
+# Our own crates are now licensed Apache-2.0 (via [workspace.package]; the ui
+# crate sets it directly) — and Apache-2.0 is on the allow-list above, so they'd
+# pass on their own merits. We also keep private.ignore: they're `publish = false`
+# (never going to crates.io), so there's no reason to run license policy on them.
+private = { ignore = true }
+
+[bans]
+# Duplicate versions of one crate bloat the build. In wirefinder they're all
+# transitive (getrandom 0.2 vs 0.4, winnow 0.7 vs 1.0 — both pulled by
+# defguard's tree), so WARN rather than fail: you don't break CI over a
+# dependency's internal version skew you can't fix.
+multiple-versions = "warn"
+# A `*` version requirement in YOUR manifests is reckless, though — deny those.
+wildcards = "deny"
+allow-wildcard-paths = true   # …but internal path deps (wirefinder-proto) are fine
+
+[sources]
+# Crates must come from crates.io. No surprise git or private-registry sources.
+unknown-registry = "deny"
+unknown-git = "deny"

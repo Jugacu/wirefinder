@@ -1,0 +1,9 @@
+[workspace]
+resolver = "2"
+members = ["proto", "daemon", "cli"]
+exclude = ["ui"]
+
+# Shared package metadata, inherited by members via `license.workspace = true`.
+# One source of truth for the license across the workspace.
+[workspace.package]
+license = "Apache-2.0"

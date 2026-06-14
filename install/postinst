@@ -1,0 +1,34 @@
+#!/bin/sh
+# postinst — runs as root after the package's files are unpacked.
+# cargo-deb substitutes its systemd fragments (register the unit + daemon-reload;
+# enable/start are off, so it won't launch the service) at the token below.
+# NOTE: that token must appear EXACTLY ONCE and never inside a comment, or the
+# substitution lands in the wrong place and mangles the script.
+set -e
+
+# The unit runs the daemon with Group=wirefinder so the socket lands as
+# root:wirefinder 0660 — that group is how the unprivileged UI reaches it. The
+# group must exist before the service ever starts, so create it here, idempotently.
+if ! getent group wirefinder >/dev/null; then
+    groupadd --system wirefinder
+fi
+
+#DEBHELPER#
+
+# First install only ($2 is the old version on upgrade, empty on a fresh install).
+if [ "$1" = "configure" ] && [ -z "$2" ]; then
+    cat <<'EOF'
+
+wirefinder installed. The daemon is enabled and running — there is no config file
+to edit. Just give your login user access to the daemon's socket, then set
+everything up in the app:
+
+  1. Let your login user reach the socket:
+       sudo usermod -aG wirefinder "$USER"      # then log out and back in
+  2. Launch "wirefinder" from your applications menu (or run wirefinder-ui).
+     The app walks you through creating your keys and adding your first server.
+
+EOF
+fi
+
+exit 0

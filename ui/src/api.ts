@@ -1,0 +1,65 @@
+import { invoke } from "@tauri-apps/api/core";
+
+// These mirror the Rust types in `wirefinder-proto`. serde serializes a unit enum
+// variant as just its name string, hence the string-literal union for ConnState.
+export type ConnState = "Alive" | "Connecting" | "Stale" | "Never";
+
+/** A complete tunnel definition sent to add a server. `private_key: null` asks the
+ *  daemon to generate one. Mirrors `wirefinder_proto::ServerSpec`. */
+export interface ServerSpec {
+  name: string;
+  private_key: string | null;
+  public_key: string; // the server's (peer's) public key
+  endpoint: string;
+  addresses: string[];
+  allowed_ips: string[];
+  listen_port: number | null;
+  mtu: number | null;
+  keepalive: number | null;
+  preshared_key: string | null;
+  dns: string[];
+}
+
+/** The safe list view: identity + our derived public key, never the private key. */
+export interface ServerInfo {
+  name: string;
+  endpoint: string;
+  addresses: string[];
+  public_key: string; // OURS, derived — safe to show/copy
+  active: boolean;
+}
+
+export interface PeerStatus {
+  public_key: string;
+  endpoint: string | null; // Rust Option<String> → null when absent
+  allowed_ips: string[];
+  state: ConnState;
+  handshake_age_secs: number | null;
+  rx_bytes: number;
+  tx_bytes: number;
+}
+
+export interface InterfaceStatus {
+  name: string;
+  listen_port: number;
+  peers: PeerStatus[];
+}
+
+// --- configuration ---
+export const addServer = (server: ServerSpec) =>
+  invoke<ServerInfo[]>("add_server", { server });
+
+/** Import a wg-quick `.conf` (full text). The daemon parses, validates, and stores. */
+export const importServer = (name: string, conf: string) =>
+  invoke<ServerInfo[]>("import_server", { name, conf });
+
+export const removeServer = (name: string) =>
+  invoke<ServerInfo[]>("remove_server", { name });
+
+// --- status / control ---
+export const listServers = () => invoke<ServerInfo[]>("list_servers");
+// null when the daemon is reachable but the tunnel is down (disconnected).
+export const getStatus = () => invoke<InterfaceStatus | null>("status");
+export const switchServer = (name: string) =>
+  invoke<string>("switch_server", { name });
+export const disconnect = () => invoke<void>("disconnect");
