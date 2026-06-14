@@ -1,5 +1,8 @@
 import { ChangeEvent, useState } from "react";
 import { importServer, ServerInfo } from "../api";
+import { cx } from "../lib/cx";
+import shared from "./shared.module.css";
+import forms from "./forms.module.css";
 
 interface Props {
   /** Called with the updated server list after a successful import. */
@@ -50,19 +53,19 @@ export function ImportForm({ onImported, onCancel }: Props) {
   }
 
   return (
-    <div className="form">
-      <label className="field">
+    <div className={forms.form}>
+      <label className={forms.field}>
         <span>Name</span>
         <input value={name} onChange={(e) => setName(e.target.value)} placeholder="home" />
       </label>
 
-      <label className="field">
+      <label className={forms.field}>
         <span>WireGuard config file</span>
         <input type="file" accept=".conf,text/plain" onChange={onFile} />
         <small>Pick a .conf file, or paste its contents below.</small>
       </label>
 
-      <label className="field">
+      <label className={forms.field}>
         <span>…or paste it</span>
         <textarea
           value={conf}
@@ -75,13 +78,13 @@ export function ImportForm({ onImported, onCancel }: Props) {
 
       {error && <p className="error">{error}</p>}
 
-      <div className="form-actions">
+      <div className={forms.formActions}>
         {onCancel && (
-          <button type="button" className="btn ghost" onClick={onCancel} disabled={busy}>
+          <button type="button" className={cx(shared.btn, shared.ghost)} onClick={onCancel} disabled={busy}>
             Cancel
           </button>
         )}
-        <button type="button" className="btn primary" onClick={submit} disabled={busy}>
+        <button type="button" className={cx(shared.btn, shared.primary)} onClick={submit} disabled={busy}>
           {busy ? "Importing…" : "Import"}
         </button>
       </div>

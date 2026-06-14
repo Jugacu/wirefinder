@@ -1,5 +1,8 @@
 import { FormEvent, useState } from "react";
 import { ServerSpec } from "../api";
+import { cx } from "../lib/cx";
+import shared from "./shared.module.css";
+import forms from "./forms.module.css";
 
 interface Props {
   /** Submit handler. Throwing/rejecting surfaces as an inline error. */
@@ -85,13 +88,13 @@ export function ServerForm({ onSubmit, onCancel, submitLabel = "Add server" }: P
   }
 
   return (
-    <form className="form" onSubmit={submit}>
-      <label className="field">
+    <form className={forms.form} onSubmit={submit}>
+      <label className={forms.field}>
         <span>Name</span>
         <input value={name} onChange={(e) => setName(e.target.value)} placeholder="home" autoFocus />
       </label>
 
-      <label className="field">
+      <label className={forms.field}>
         <span>Server public key</span>
         <input
           value={publicKey}
@@ -101,7 +104,7 @@ export function ServerForm({ onSubmit, onCancel, submitLabel = "Add server" }: P
         />
       </label>
 
-      <label className="field">
+      <label className={forms.field}>
         <span>Endpoint</span>
         <input
           value={endpoint}
@@ -111,7 +114,7 @@ export function ServerForm({ onSubmit, onCancel, submitLabel = "Add server" }: P
         />
       </label>
 
-      <label className="field">
+      <label className={forms.field}>
         <span>Tunnel addresses</span>
         <input
           value={addresses}
@@ -122,7 +125,7 @@ export function ServerForm({ onSubmit, onCancel, submitLabel = "Add server" }: P
         <small>The address this server assigned to your device. Comma-separated for dual-stack.</small>
       </label>
 
-      <label className="field">
+      <label className={forms.field}>
         <span>Allowed IPs</span>
         <input
           value={allowedIps}
@@ -133,13 +136,13 @@ export function ServerForm({ onSubmit, onCancel, submitLabel = "Add server" }: P
         <small>Comma-separated. 0.0.0.0/0 routes all traffic through the tunnel.</small>
       </label>
 
-      <div className="field">
+      <div className={forms.field}>
         <span>Key</span>
-        <div className="segmented" role="group" aria-label="Key source">
+        <div className={forms.segmented} role="group" aria-label="Key source">
           <button
             type="button"
             aria-pressed={keyMode === "generate"}
-            className={keyMode === "generate" ? "active" : ""}
+            className={keyMode === "generate" ? forms.active : undefined}
             onClick={() => setKeyMode("generate")}
           >
             Generate
@@ -147,7 +150,7 @@ export function ServerForm({ onSubmit, onCancel, submitLabel = "Add server" }: P
           <button
             type="button"
             aria-pressed={keyMode === "import"}
-            className={keyMode === "import" ? "active" : ""}
+            className={keyMode === "import" ? forms.active : undefined}
             onClick={() => setKeyMode("import")}
           >
             Use existing
@@ -161,7 +164,7 @@ export function ServerForm({ onSubmit, onCancel, submitLabel = "Add server" }: P
       </div>
 
       {keyMode === "import" && (
-        <label className="field">
+        <label className={forms.field}>
           <span>Private key</span>
           <input
             value={privateKey}
@@ -172,9 +175,9 @@ export function ServerForm({ onSubmit, onCancel, submitLabel = "Add server" }: P
         </label>
       )}
 
-      <details className="advanced">
+      <details className={forms.advanced}>
         <summary>Advanced</summary>
-        <label className="field">
+        <label className={forms.field}>
           <span>DNS servers</span>
           <input
             value={dns}
@@ -184,7 +187,7 @@ export function ServerForm({ onSubmit, onCancel, submitLabel = "Add server" }: P
           />
           <small>Comma-separated. Routed through the tunnel while connected.</small>
         </label>
-        <label className="field">
+        <label className={forms.field}>
           <span>Pre-shared key</span>
           <input
             value={presharedKey}
@@ -193,7 +196,7 @@ export function ServerForm({ onSubmit, onCancel, submitLabel = "Add server" }: P
             spellCheck={false}
           />
         </label>
-        <label className="field">
+        <label className={forms.field}>
           <span>Keepalive (seconds)</span>
           <input
             value={keepalive}
@@ -203,7 +206,7 @@ export function ServerForm({ onSubmit, onCancel, submitLabel = "Add server" }: P
           />
           <small>Recommended behind NAT. Leave empty to disable.</small>
         </label>
-        <label className="field">
+        <label className={forms.field}>
           <span>Listen port</span>
           <input
             value={listenPort}
@@ -212,7 +215,7 @@ export function ServerForm({ onSubmit, onCancel, submitLabel = "Add server" }: P
             inputMode="numeric"
           />
         </label>
-        <label className="field">
+        <label className={forms.field}>
           <span>MTU</span>
           <input
             value={mtu}
@@ -225,13 +228,13 @@ export function ServerForm({ onSubmit, onCancel, submitLabel = "Add server" }: P
 
       {error && <p className="error">{error}</p>}
 
-      <div className="form-actions">
+      <div className={forms.formActions}>
         {onCancel && (
-          <button type="button" className="btn ghost" onClick={onCancel} disabled={busy}>
+          <button type="button" className={cx(shared.btn, shared.ghost)} onClick={onCancel} disabled={busy}>
             Cancel
           </button>
         )}
-        <button type="submit" className="btn primary" disabled={busy}>
+        <button type="submit" className={cx(shared.btn, shared.primary)} disabled={busy}>
           {busy ? "Saving…" : submitLabel}
         </button>
       </div>

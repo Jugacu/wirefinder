@@ -1,0 +1,91 @@
+/* ───────────────────────────────────────────────────────────────────────────
+   wirefinder UI — global design tokens, resets, base element styles, and the
+   app-wide text utilities. Component styles live in co-located *.module.css
+   files; only genuinely document-level rules belong here.
+
+   A calm, dark, single-window desktop app. One accent colour (teal) carries the
+   "connected" meaning; everything else stays quiet so state reads at a glance.
+   ─────────────────────────────────────────────────────────────────────────── */
+
+:root {
+  --bg: #0e1419;
+  --surface: #161e26;
+  --surface-2: #1d2832;
+  --border: #28343f;
+  --text: #e6edf3;
+  /* ~4.7:1 on --surface — meets WCAG AA for the abundant small/muted text. */
+  --muted: #9fb0bd;
+  --accent: #2dd4bf;
+  --accent-dim: #134e4a;
+  --warn: #e0a83a;
+  --danger: #f0716a;
+  --radius: 12px;
+  --radius-sm: 8px;
+  --shadow: 0 8px 30px rgba(0, 0, 0, 0.35);
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  background:
+    radial-gradient(900px 500px at 100% -10%, rgba(45, 212, 191, 0.08), transparent 60%),
+    var(--bg);
+  color: var(--text);
+  -webkit-font-smoothing: antialiased;
+  font-size: 15px;
+  line-height: 1.5;
+}
+
+h1 {
+  font-size: 1.25rem;
+  margin: 0;
+  letter-spacing: -0.01em;
+}
+
+h2 {
+  font-size: 1.05rem;
+  margin: 0 0 0.5rem;
+}
+
+code {
+  font-family: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace;
+  font-size: 0.85rem;
+}
+
+code.block {
+  display: block;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 0.6rem 0.75rem;
+  margin: 0.5rem 0;
+  user-select: all;
+  word-break: break-all;
+}
+
+/* ── App-wide text utilities (used as plain class strings across components) ── */
+
+.muted {
+  color: var(--muted);
+}
+
+.small {
+  font-size: 0.85rem;
+}
+
+.error {
+  color: var(--danger);
+  font-size: 0.88rem;
+  margin: 0;
+}

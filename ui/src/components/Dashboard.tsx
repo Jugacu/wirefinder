@@ -10,8 +10,11 @@ import {
   switchServer,
 } from "../api";
 import { humanizeAge, humanizeBytes, Summary, SUMMARY_LABEL } from "../format";
+import { cx } from "../lib/cx";
 import { ImportForm } from "./ImportForm";
 import { ServerForm } from "./ServerForm";
+import shared from "./shared.module.css";
+import styles from "./Dashboard.module.css";
 
 type AddMode = null | "manual" | "import";
 
@@ -106,17 +109,17 @@ export function Dashboard({ onServersEmptied, onOffline }: Props) {
   const activePeer = status?.peers.find((p) => p.state === "Alive") ?? status?.peers[0] ?? null;
 
   return (
-    <main className="dashboard">
-      <header className="topbar">
+    <main className={styles.dashboard}>
+      <header className={styles.topbar}>
         <h1>wirefinder</h1>
-        <span className={`pill pill-${summary}`}>{SUMMARY_LABEL[summary]}</span>
+        <span className={cx(styles.pill, styles[`pill${summary}`])}>{SUMMARY_LABEL[summary]}</span>
       </header>
 
-      <section className={`hero hero-${summary}`}>
-        <div className="hero-ring" aria-hidden>
-          <span className="hero-dot" />
+      <section className={cx(styles.hero, styles[`hero${summary}`])}>
+        <div className={styles.heroRing} aria-hidden>
+          <span className={styles.heroDot} />
         </div>
-        <div className="hero-text">
+        <div className={styles.heroText}>
           <strong>{SUMMARY_LABEL[summary]}</strong>
           {connected && activePeer && (
             <span className="muted small">
@@ -130,7 +133,7 @@ export function Dashboard({ onServersEmptied, onOffline }: Props) {
         </div>
         {connected && (
           <button
-            className="btn ghost"
+            className={cx(shared.btn, shared.ghost)}
             disabled={busy !== null}
             onClick={() => act("__disconnect__", disconnect)}
           >
@@ -139,15 +142,15 @@ export function Dashboard({ onServersEmptied, onOffline }: Props) {
         )}
       </section>
 
-      <section className="servers-section">
-        <div className="section-head">
+      <section>
+        <div className={styles.sectionHead}>
           <h2>Servers</h2>
           {adding === null && (
-            <span className="add-actions">
-              <button className="btn ghost small" onClick={() => setAdding("import")}>
+            <span className={styles.addActions}>
+              <button className={cx(shared.btn, shared.ghost, shared.small)} onClick={() => setAdding("import")}>
                 Import .conf
               </button>
-              <button className="btn ghost small" onClick={() => setAdding("manual")}>
+              <button className={cx(shared.btn, shared.ghost, shared.small)} onClick={() => setAdding("manual")}>
                 + Add
               </button>
             </span>
@@ -155,7 +158,7 @@ export function Dashboard({ onServersEmptied, onOffline }: Props) {
         </div>
 
         {adding === "manual" && (
-          <div className="card inset">
+          <div className={cx(shared.card, shared.inset)}>
             <ServerForm
               submitLabel="Add server"
               onCancel={() => setAdding(null)}
@@ -169,7 +172,7 @@ export function Dashboard({ onServersEmptied, onOffline }: Props) {
         )}
 
         {adding === "import" && (
-          <div className="card inset">
+          <div className={cx(shared.card, shared.inset)}>
             <ImportForm
               onCancel={() => setAdding(null)}
               onImported={(left) => {
@@ -180,27 +183,27 @@ export function Dashboard({ onServersEmptied, onOffline }: Props) {
           </div>
         )}
 
-        <ul className="servers">
+        <ul className={styles.servers}>
           {servers.map((s) => (
-            <li key={s.name} className={s.active ? "active" : ""}>
-              <span className="dot" aria-hidden>
+            <li key={s.name} className={s.active ? styles.active : undefined}>
+              <span className={styles.dot} aria-hidden>
                 {s.active ? "●" : "○"}
               </span>
-              <span className="server-meta">
-                <span className="name">{s.name}</span>
-                <span className="endpoint">{s.endpoint}</span>
-                <span className="endpoint">{s.addresses.join(", ")}</span>
+              <span className={styles.serverMeta}>
+                <span className={styles.name}>{s.name}</span>
+                <span className={styles.endpoint}>{s.endpoint}</span>
+                <span className={styles.endpoint}>{s.addresses.join(", ")}</span>
               </span>
-              <span className="row-actions">
+              <span className={styles.rowActions}>
                 <button
-                  className="btn primary small"
+                  className={cx(shared.btn, shared.primary, shared.small)}
                   disabled={s.active || busy !== null}
                   onClick={() => act(s.name, () => switchServer(s.name))}
                 >
                   {busy === s.name ? "Switching…" : s.active ? "Connected" : "Connect"}
                 </button>
                 <button
-                  className="btn ghost small danger"
+                  className={cx(shared.btn, shared.ghost, shared.small, shared.danger)}
                   disabled={busy !== null}
                   title={`Remove ${s.name}`}
                   onClick={() =>
@@ -232,12 +235,12 @@ export function Dashboard({ onServersEmptied, onOffline }: Props) {
         </ul>
 
         {servers.length === 0 && adding === null && (
-          <p className="muted empty">No servers yet. Add one to get connected.</p>
+          <p className={cx("muted", styles.empty)}>No servers yet. Add one to get connected.</p>
         )}
       </section>
 
       {error && (
-        <p className="error toast" role="alert">
+        <p className={cx("error", styles.toast)} role="alert">
           {error}
         </p>
       )}

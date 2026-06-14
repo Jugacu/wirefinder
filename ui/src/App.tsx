@@ -2,7 +2,9 @@ import { useCallback, useEffect, useState } from "react";
 import { listServers, ServerInfo } from "./api";
 import { Dashboard } from "./components/Dashboard";
 import { Onboarding } from "./components/Onboarding";
-import "./App.css";
+import { cx } from "./lib/cx";
+import shared from "./components/shared.module.css";
+import styles from "./App.module.css";
 
 type Phase =
   | { kind: "loading" }
@@ -27,23 +29,23 @@ export default function App() {
 
   if (phase.kind === "loading") {
     return (
-      <main className="splash">
-        <span className="spinner" aria-label="Loading" />
+      <main className={styles.splash}>
+        <span className={styles.spinner} aria-label="Loading" />
       </main>
     );
   }
 
   if (phase.kind === "offline") {
     return (
-      <main className="splash">
-        <div className="card center">
+      <main className={styles.splash}>
+        <div className={cx(shared.card, shared.center)}>
           <h2>Can't reach the daemon</h2>
           <p className="muted">
             wirefinderd isn't responding. Make sure the service is running:
           </p>
           <code className="block">sudo systemctl start wirefinderd</code>
           <p className="error small">{phase.error}</p>
-          <button className="btn primary" onClick={() => { setPhase({ kind: "loading" }); load(); }}>
+          <button className={cx(shared.btn, shared.primary)} onClick={() => { setPhase({ kind: "loading" }); load(); }}>
             Retry
           </button>
         </div>

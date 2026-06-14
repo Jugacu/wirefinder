@@ -1,0 +1,242 @@
+/* The main dashboard: status hero + server list. */
+
+.dashboard {
+  max-width: 34rem;
+  margin: 0 auto;
+  padding: 1.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+/* ── Status pill ──────────────────────────────────────────────────────────── */
+
+.pill {
+  font-size: 0.78rem;
+  font-weight: 600;
+  padding: 0.25rem 0.6rem;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  color: var(--muted);
+}
+
+.pill-Alive {
+  color: var(--accent);
+  border-color: var(--accent-dim);
+  background: rgba(45, 212, 191, 0.1);
+}
+
+.pill-Connecting {
+  color: var(--warn);
+  border-color: rgba(224, 168, 58, 0.3);
+}
+
+.pill-Stale {
+  color: var(--warn);
+}
+
+.pill-Offline,
+.pill-Disconnected {
+  color: var(--muted);
+}
+
+/* ── Hero ─────────────────────────────────────────────────────────────────── */
+
+.hero {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 1.25rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+
+.hero-ring {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  border: 2px solid var(--border);
+  flex-shrink: 0;
+}
+
+.hero-dot {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--muted);
+  transition: background 0.3s ease, box-shadow 0.3s ease;
+}
+
+.hero-text {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  flex: 1;
+}
+
+.hero-text strong {
+  font-size: 1.1rem;
+}
+
+.hero-Alive .hero-ring {
+  border-color: var(--accent);
+}
+
+.hero-Alive .hero-dot {
+  background: var(--accent);
+  box-shadow: 0 0 0 4px rgba(45, 212, 191, 0.18);
+}
+
+.hero-Connecting .hero-dot {
+  background: var(--warn);
+  animation: pulse 1.2s ease-in-out infinite;
+}
+
+.hero-Stale .hero-ring {
+  border-color: var(--warn);
+}
+
+.hero-Stale .hero-dot {
+  background: var(--warn);
+}
+
+/* Idle states (Disconnected / Offline) keep the neutral grey ring + dot from the
+   base rules — that quietness IS their identity. */
+
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 1;
+    box-shadow: 0 0 0 0 rgba(224, 168, 58, 0.35);
+  }
+  50% {
+    opacity: 0.6;
+    box-shadow: 0 0 0 6px rgba(224, 168, 58, 0);
+  }
+}
+
+/* ── Servers ──────────────────────────────────────────────────────────────── */
+
+.section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.6rem;
+}
+
+.section-head h2 {
+  margin: 0;
+}
+
+.add-actions {
+  display: flex;
+  gap: 0.4rem;
+}
+
+.servers {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.servers li {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.7rem 0.85rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.servers li.active {
+  border-color: var(--accent-dim);
+  background: rgba(45, 212, 191, 0.06);
+}
+
+.servers .dot {
+  color: var(--muted);
+  font-size: 0.7rem;
+}
+
+.servers li.active .dot {
+  color: var(--accent);
+}
+
+.server-meta {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+}
+
+.server-meta .name {
+  font-weight: 600;
+}
+
+.server-meta .endpoint {
+  color: var(--muted);
+  font-size: 0.82rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.row-actions {
+  display: flex;
+  gap: 0.4rem;
+  flex-shrink: 0;
+}
+
+.empty {
+  text-align: center;
+  padding: 1rem;
+  font-size: 0.9rem;
+}
+
+/* ── Error toast ──────────────────────────────────────────────────────────── */
+
+.toast {
+  position: sticky;
+  bottom: 0;
+  background: rgba(240, 113, 106, 0.12);
+  border: 1px solid rgba(240, 113, 106, 0.35);
+  border-radius: var(--radius-sm);
+  padding: 0.6rem 0.8rem;
+  word-break: break-word;
+}
+
+/* ── Responsive: narrow windows (down to the 380px floor) ─────────────────── */
+
+@media (max-width: 420px) {
+  .servers li {
+    flex-wrap: wrap;
+  }
+  .row-actions {
+    width: 100%;
+    justify-content: flex-end;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hero-Connecting .hero-dot {
+    animation: none;
+  }
+  .servers li {
+    transition: none;
+  }
+}

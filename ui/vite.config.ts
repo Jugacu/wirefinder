@@ -8,6 +8,12 @@ const host = process.env.TAURI_DEV_HOST;
 export default defineConfig(async () => ({
   plugins: [react()],
 
+  // Expose CSS-module class names as camelCase keys (e.g. styles.heroDot for
+  // the `.hero-dot` class) so kebab-case selectors stay ergonomic from TS.
+  css: {
+    modules: { localsConvention: "camelCaseOnly" },
+  },
+
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
   //
   // 1. prevent Vite from obscuring rust errors

@@ -1,8 +1,11 @@
 import { useState } from "react";
 import { addServer } from "../api";
+import { cx } from "../lib/cx";
 import { CopyField } from "./CopyField";
 import { ImportForm } from "./ImportForm";
 import { ServerForm } from "./ServerForm";
+import shared from "./shared.module.css";
+import styles from "./Onboarding.module.css";
 
 interface Props {
   /** Called once at least one server exists. */
@@ -25,38 +28,38 @@ export function Onboarding({ onComplete }: Props) {
   const [step, setStep] = useState<Step>({ kind: "welcome" });
 
   return (
-    <main className="onboarding">
-      <header className="onboarding-head">
+    <main className={styles.onboarding}>
+      <header className={styles.onboardingHead}>
         <Logo />
         <h1>wirefinder</h1>
-        <p className="tagline">A calm home for your WireGuard tunnels.</p>
+        <p className={styles.tagline}>A calm home for your WireGuard tunnels.</p>
       </header>
 
       {step.kind === "welcome" && (
-        <section className="card">
+        <section className={shared.card}>
           <h2>Add your first server</h2>
           <p className="muted">
             A server is a complete WireGuard config. Import the <code>.conf</code> your
             provider gave you, or enter a self-hosted one by hand.
           </p>
-          <button className="btn primary block" onClick={() => setStep({ kind: "import" })}>
+          <button className={cx(shared.btn, shared.primary, shared.block)} onClick={() => setStep({ kind: "import" })}>
             Import a .conf file
           </button>
-          <button className="btn ghost block" onClick={() => setStep({ kind: "manual" })}>
+          <button className={cx(shared.btn, shared.ghost, shared.block)} onClick={() => setStep({ kind: "manual" })}>
             Add manually
           </button>
         </section>
       )}
 
       {step.kind === "import" && (
-        <section className="card">
+        <section className={shared.card}>
           <h2>Import a config</h2>
           <ImportForm onImported={onComplete} onCancel={() => setStep({ kind: "welcome" })} />
         </section>
       )}
 
       {step.kind === "manual" && (
-        <section className="card">
+        <section className={shared.card}>
           <h2>Add a server</h2>
           <p className="muted">This is the WireGuard peer you'll connect to.</p>
           <ServerForm
@@ -77,14 +80,14 @@ export function Onboarding({ onComplete }: Props) {
       )}
 
       {step.kind === "registered" && (
-        <section className="card">
+        <section className={shared.card}>
           <h2>Register your public key</h2>
           <p className="muted">
             We generated a keypair for <strong>{step.name}</strong>. Add this public key to
             that server's list of peers, then you're ready to connect.
           </p>
           <CopyField value={step.publicKey} />
-          <button className="btn primary block" onClick={onComplete}>
+          <button className={cx(shared.btn, shared.primary, shared.block)} onClick={onComplete}>
             Done
           </button>
         </section>
@@ -95,7 +98,7 @@ export function Onboarding({ onComplete }: Props) {
 
 function Logo() {
   return (
-    <svg className="logo" viewBox="0 0 48 48" width="44" height="44" aria-hidden>
+    <svg className={styles.logo} viewBox="0 0 48 48" width="44" height="44" aria-hidden>
       <circle cx="24" cy="24" r="21" fill="none" stroke="currentColor" strokeWidth="2" opacity="0.25" />
       <circle cx="24" cy="24" r="13" fill="none" stroke="currentColor" strokeWidth="2" opacity="0.5" />
       <circle cx="24" cy="24" r="4.5" fill="currentColor" />
