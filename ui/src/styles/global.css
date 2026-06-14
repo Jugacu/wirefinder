@@ -41,6 +41,12 @@ body {
   background:
     radial-gradient(900px 500px at 100% -10%, rgba(45, 212, 191, 0.08), transparent 60%),
     var(--bg);
+  /* The gradient is a finite 900×500 image; without these it tiles down the page
+     once content (e.g. an open form) makes the document taller than the window.
+     no-repeat stops the tiling; fixed anchors the glow to the viewport's
+     top-right so it stays put on scroll. */
+  background-repeat: no-repeat;
+  background-attachment: fixed;
   color: var(--text);
   -webkit-font-smoothing: antialiased;
   font-size: 15px;
