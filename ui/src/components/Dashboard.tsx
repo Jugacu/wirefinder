@@ -10,7 +10,6 @@ import {
   switchServer,
 } from "../api";
 import { humanizeAge, humanizeBytes, Summary, SUMMARY_LABEL } from "../format";
-import { CopyButton } from "./CopyField";
 import { ImportForm } from "./ImportForm";
 import { ServerForm } from "./ServerForm";
 
