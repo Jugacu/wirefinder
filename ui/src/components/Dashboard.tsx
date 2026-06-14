@@ -200,7 +200,6 @@ export function Dashboard({ onServersEmptied, onOffline }: Props) {
                 >
                   {busy === s.name ? "Switching…" : s.active ? "Connected" : "Connect"}
                 </button>
-                <CopyButton value={s.public_key} />
                 <button
                   className="btn ghost small danger"
                   disabled={busy !== null}
