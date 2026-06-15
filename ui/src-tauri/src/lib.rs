@@ -103,6 +103,11 @@ struct TrayStatus(MenuItem<tauri::Wry>);
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        // Must be registered first: a second launch fires this in the running
+        // process (then exits), so we just surface the window we already have.
+        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+            show_main(app);
+        }))
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             // A minimal tray: a (disabled) status header that we keep updated
@@ -154,6 +159,7 @@ pub fn run() {
 
 fn show_main(app: &tauri::AppHandle) {
     if let Some(w) = app.get_webview_window("main") {
+        let _ = w.unminimize();
         let _ = w.show();
         let _ = w.set_focus();
     }
