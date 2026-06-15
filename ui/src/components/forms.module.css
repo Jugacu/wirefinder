@@ -26,7 +26,9 @@
   border-radius: var(--radius-sm);
   padding: 0.55rem 0.7rem;
   color: var(--text);
-  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  transition:
+    border-color 0.15s ease,
+    box-shadow 0.15s ease;
 }
 
 .field textarea {
@@ -39,7 +41,9 @@
   padding: 0.55rem 0.7rem;
   color: var(--text);
   resize: vertical;
-  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  transition:
+    border-color 0.15s ease,
+    box-shadow 0.15s ease;
 }
 
 .field input::placeholder,
@@ -67,7 +71,7 @@
   padding: 0.3rem 0.7rem;
   border: 1px solid var(--border);
   border-radius: 6px;
-  background: var(--surface-2);
+  background: var(--surface-1);
   color: var(--text);
   cursor: pointer;
 }
@@ -125,7 +129,9 @@
   background: transparent;
   color: var(--muted);
   cursor: pointer;
-  transition: background 0.15s ease, color 0.15s ease;
+  transition:
+    background 0.15s ease,
+    color 0.15s ease;
 }
 
 .segmented button.active {

@@ -8,14 +8,14 @@
    ─────────────────────────────────────────────────────────────────────────── */
 
 :root {
-  --bg: #0e1419;
-  --surface: #161e26;
-  --surface-2: #1d2832;
-  --border: #28343f;
+  --bg: #323159;
+  --surface: #202745;
+  --surface-2: #202745;
+  --border: #265885;
   --text: #e6edf3;
   /* ~4.7:1 on --surface — meets WCAG AA for the abundant small/muted text. */
   --muted: #9fb0bd;
-  --accent: #2dd4bf;
+  --accent: #36c6e6;
   --accent-dim: #134e4a;
   --warn: #e0a83a;
   --danger: #f0716a;
@@ -38,9 +38,7 @@ body,
 
 body {
   font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-  background:
-    radial-gradient(900px 500px at 100% -10%, rgba(45, 212, 191, 0.08), transparent 60%),
-    var(--bg);
+  background: linear-gradient(#2c2d46, #494a71);
   /* The gradient is a finite 900×500 image; without these it tiles down the page
      once content (e.g. an open form) makes the document taller than the window.
      no-repeat stops the tiling; fixed anchors the glow to the viewport's

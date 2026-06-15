@@ -3,9 +3,9 @@ import { addServer } from "../api";
 import { cx } from "../lib/cx";
 import { CopyField } from "./CopyField";
 import { ImportForm } from "./ImportForm";
+import styles from "./Onboarding.module.css";
 import { ServerForm } from "./ServerForm";
 import shared from "./shared.module.css";
-import styles from "./Onboarding.module.css";
 
 interface Props {
   /** Called once at least one server exists. */
@@ -39,13 +39,21 @@ export function Onboarding({ onComplete }: Props) {
         <section className={shared.card}>
           <h2>Add your first server</h2>
           <p className="muted">
-            A server is a complete WireGuard config. Import the <code>.conf</code> your
-            provider gave you, or enter a self-hosted one by hand.
+            A server is a complete WireGuard config. Import the <code>.conf</code> your provider
+            gave you, or enter a self-hosted one by hand.
           </p>
-          <button className={cx(shared.btn, shared.primary, shared.block)} onClick={() => setStep({ kind: "import" })}>
+          <button
+            type="button"
+            className={cx(shared.btn, shared.primary, shared.block)}
+            onClick={() => setStep({ kind: "import" })}
+          >
             Import a .conf file
           </button>
-          <button className={cx(shared.btn, shared.ghost, shared.block)} onClick={() => setStep({ kind: "manual" })}>
+          <button
+            type="button"
+            className={cx(shared.btn, shared.ghost, shared.block)}
+            onClick={() => setStep({ kind: "manual" })}
+          >
             Add manually
           </button>
         </section>
@@ -83,11 +91,15 @@ export function Onboarding({ onComplete }: Props) {
         <section className={shared.card}>
           <h2>Register your public key</h2>
           <p className="muted">
-            We generated a keypair for <strong>{step.name}</strong>. Add this public key to
-            that server's list of peers, then you're ready to connect.
+            We generated a keypair for <strong>{step.name}</strong>. Add this public key to that
+            server's list of peers, then you're ready to connect.
           </p>
           <CopyField value={step.publicKey} />
-          <button className={cx(shared.btn, shared.primary, shared.block)} onClick={onComplete}>
+          <button
+            type="button"
+            className={cx(shared.btn, shared.primary, shared.block)}
+            onClick={onComplete}
+          >
             Done
           </button>
         </section>
@@ -98,9 +110,25 @@ export function Onboarding({ onComplete }: Props) {
 
 function Logo() {
   return (
-    <svg className={styles.logo} viewBox="0 0 48 48" width="44" height="44" aria-hidden>
-      <circle cx="24" cy="24" r="21" fill="none" stroke="currentColor" strokeWidth="2" opacity="0.25" />
-      <circle cx="24" cy="24" r="13" fill="none" stroke="currentColor" strokeWidth="2" opacity="0.5" />
+    <svg className={styles.logo} viewBox="0 0 48 48" width="44" height="44" aria-hidden="true">
+      <circle
+        cx="24"
+        cy="24"
+        r="21"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        opacity="0.25"
+      />
+      <circle
+        cx="24"
+        cy="24"
+        r="13"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        opacity="0.5"
+      />
       <circle cx="24" cy="24" r="4.5" fill="currentColor" />
     </svg>
   );

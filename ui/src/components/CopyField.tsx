@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { cx } from "../lib/cx";
-import shared from "./shared.module.css";
 import styles from "./CopyField.module.css";
+import shared from "./shared.module.css";
 
 /** A read-only value with a one-click copy button — used to surface the public key. */
 type State = "idle" | "copied" | "failed";

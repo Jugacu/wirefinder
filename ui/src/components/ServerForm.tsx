@@ -1,8 +1,8 @@
-import { FormEvent, useState } from "react";
-import { ServerSpec } from "../api";
+import { type FormEvent, useState } from "react";
+import type { ServerSpec } from "../api";
 import { cx } from "../lib/cx";
-import shared from "./shared.module.css";
 import forms from "./forms.module.css";
+import shared from "./shared.module.css";
 
 interface Props {
   /** Submit handler. Throwing/rejecting surfaces as an inline error. */
@@ -12,7 +12,10 @@ interface Props {
 }
 
 const csv = (s: string) =>
-  s.split(",").map((x) => x.trim()).filter((x) => x.length > 0);
+  s
+    .split(",")
+    .map((x) => x.trim())
+    .filter((x) => x.length > 0);
 
 const numOrNull = (s: string): number | null | undefined => {
   const t = s.trim();
@@ -91,7 +94,12 @@ export function ServerForm({ onSubmit, onCancel, submitLabel = "Add server" }: P
     <form className={forms.form} onSubmit={submit}>
       <label className={forms.field}>
         <span>Name</span>
-        <input value={name} onChange={(e) => setName(e.target.value)} placeholder="home" autoFocus />
+        <input
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          placeholder="home"
+          autoFocus
+        />
       </label>
 
       <label className={forms.field}>
@@ -122,7 +130,9 @@ export function ServerForm({ onSubmit, onCancel, submitLabel = "Add server" }: P
           placeholder="10.0.0.2/24"
           spellCheck={false}
         />
-        <small>The address this server assigned to your device. Comma-separated for dual-stack.</small>
+        <small>
+          The address this server assigned to your device. Comma-separated for dual-stack.
+        </small>
       </label>
 
       <label className={forms.field}>
@@ -138,6 +148,7 @@ export function ServerForm({ onSubmit, onCancel, submitLabel = "Add server" }: P
 
       <div className={forms.field}>
         <span>Key</span>
+        {/* biome-ignore lint/a11y/useSemanticElements: a segmented toggle, not a form fieldset; <fieldset> would impose unwanted default chrome */}
         <div className={forms.segmented} role="group" aria-label="Key source">
           <button
             type="button"
@@ -230,7 +241,12 @@ export function ServerForm({ onSubmit, onCancel, submitLabel = "Add server" }: P
 
       <div className={forms.formActions}>
         {onCancel && (
-          <button type="button" className={cx(shared.btn, shared.ghost)} onClick={onCancel} disabled={busy}>
+          <button
+            type="button"
+            className={cx(shared.btn, shared.ghost)}
+            onClick={onCancel}
+            disabled={busy}
+          >
             Cancel
           </button>
         )}

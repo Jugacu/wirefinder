@@ -1,8 +1,8 @@
-import { ChangeEvent, useState } from "react";
-import { importServer, ServerInfo } from "../api";
+import { type ChangeEvent, useState } from "react";
+import { importServer, type ServerInfo } from "../api";
 import { cx } from "../lib/cx";
-import shared from "./shared.module.css";
 import forms from "./forms.module.css";
+import shared from "./shared.module.css";
 
 interface Props {
   /** Called with the updated server list after a successful import. */
@@ -80,11 +80,21 @@ export function ImportForm({ onImported, onCancel }: Props) {
 
       <div className={forms.formActions}>
         {onCancel && (
-          <button type="button" className={cx(shared.btn, shared.ghost)} onClick={onCancel} disabled={busy}>
+          <button
+            type="button"
+            className={cx(shared.btn, shared.ghost)}
+            onClick={onCancel}
+            disabled={busy}
+          >
             Cancel
           </button>
         )}
-        <button type="button" className={cx(shared.btn, shared.primary)} onClick={submit} disabled={busy}>
+        <button
+          type="button"
+          className={cx(shared.btn, shared.primary)}
+          onClick={submit}
+          disabled={busy}
+        >
           {busy ? "Importing…" : "Import"}
         </button>
       </div>

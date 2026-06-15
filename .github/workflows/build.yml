@@ -129,6 +129,46 @@ jobs:
         working-directory: ui
         run: pnpm tauri build --no-bundle
 
+  # Quality gate for the frontend: is the TypeScript/React/CSS correct and clean,
+  # not just compilable? The UI mirror of the Rust `quality` job below. It's cheap
+  # (no webkit, no Rust), so it runs as its own fast job and fails in seconds —
+  # giving lint/format/type feedback long before build-ui's full Tauri compile
+  # finishes. Biome (lint + format, one binary) and tsc are dev deps in ui/.
+  lint-ui:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ui
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      # pnpm BEFORE setup-node (same reason as build-ui: setup-node's pnpm cache
+      # calls `pnpm store path`, so the binary must exist first). Versions match
+      # Julian's machine (pnpm 10, node 20).
+      - name: Install pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: 10
+      - name: Install Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 20
+          cache: pnpm
+          cache-dependency-path: ui/pnpm-lock.yaml
+
+      - name: Install frontend deps
+        run: pnpm install --frozen-lockfile
+
+      # `biome ci` is the non-writing, CI-tuned command: it lints AND format-checks
+      # in one pass and fails on any diff or lint error (no --write here — CI proves,
+      # it doesn't fix). Then tsc type-checks; build-ui also type-checks via the full
+      # build, but this fails fast and pinpoints type errors without the webkit compile.
+      - name: Biome lint + format check
+        run: pnpm biome ci .
+      - name: Typecheck
+        run: pnpm typecheck
+
   # Supply-chain gate. Runs in parallel with the build jobs and reads the policy
   # in deny.toml: security advisories, license allow-list, duplicate/forbidden
   # crates, and crate sources. A NEW advisory or a disallowed license fails CI.

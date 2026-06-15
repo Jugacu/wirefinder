@@ -1,22 +1,22 @@
 import { useEffect, useRef, useState } from "react";
-import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   addServer,
   disconnect,
   getStatus,
-  InterfaceStatus,
+  type InterfaceStatus,
   listServers,
   removeServer,
-  ServerInfo,
+  type ServerInfo,
   setTraySummary,
   switchServer,
 } from "../api";
-import { humanizeAge, humanizeBytes, Summary, SUMMARY_LABEL, trayTooltip } from "../format";
+import { humanizeAge, humanizeBytes, SUMMARY_LABEL, type Summary, trayTooltip } from "../format";
 import { cx } from "../lib/cx";
+import styles from "./Dashboard.module.css";
 import { ImportForm } from "./ImportForm";
+import { Menu } from "./Menu";
 import { ServerForm } from "./ServerForm";
 import shared from "./shared.module.css";
-import styles from "./Dashboard.module.css";
 
 type AddMode = null | "manual" | "import";
 
@@ -81,6 +81,7 @@ export function Dashboard({ onServersEmptied, onOffline }: Props) {
     }
   }
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the poll loop is set up once on mount; refresh reads the latest state through refs.
   useEffect(() => {
     mounted.current = true;
     refresh();
@@ -92,7 +93,6 @@ export function Dashboard({ onServersEmptied, onOffline }: Props) {
       mounted.current = false;
       clearInterval(id);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Run an action, then re-read state. `key` drives per-row spinners. `skipRefresh`
@@ -112,6 +112,18 @@ export function Dashboard({ onServersEmptied, onOffline }: Props) {
     }
   }
 
+  // The public key is non-secret (you register it on your server); copy it straight to
+  // the clipboard. The private key never leaves the daemon, so it's never offered here.
+  // Returns the label the menu flashes in place to confirm.
+  async function copyKey(s: ServerInfo): Promise<string> {
+    try {
+      await navigator.clipboard.writeText(s.public_key);
+      return "Copied";
+    } catch {
+      return "Copy failed";
+    }
+  }
+
   const connected = summary !== "Offline" && summary !== "Disconnected";
   const activePeer = status?.peers.find((p) => p.state === "Alive") ?? status?.peers[0] ?? null;
 
@@ -120,17 +132,9 @@ export function Dashboard({ onServersEmptied, onOffline }: Props) {
       <header className={styles.topbar}>
         <h1>wirefinder</h1>
         <span className={styles.topbarRight}>
-          <span className={cx(styles.pill, styles[`pill${summary}`])}>{SUMMARY_LABEL[summary]}</span>
-          <button
-            className={styles.close}
-            aria-label="Close"
-            onClick={() => getCurrentWindow().hide()}
-          >
-            <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden>
-              <line x1="1" y1="1" x2="9" y2="9" stroke="currentColor" strokeWidth="1" />
-              <line x1="9" y1="1" x2="1" y2="9" stroke="currentColor" strokeWidth="1" />
-            </svg>
-          </button>
+          <span className={cx(styles.pill, styles[`pill${summary}`])}>
+            {SUMMARY_LABEL[summary]}
+          </span>
         </span>
       </header>
 
@@ -152,6 +156,7 @@ export function Dashboard({ onServersEmptied, onOffline }: Props) {
         </div>
         {connected && (
           <button
+            type="button"
             className={cx(shared.btn, shared.ghost)}
             disabled={busy !== null}
             onClick={() => act("__disconnect__", disconnect)}
@@ -166,10 +171,18 @@ export function Dashboard({ onServersEmptied, onOffline }: Props) {
           <h2>Servers</h2>
           {adding === null && (
             <span className={styles.addActions}>
-              <button className={cx(shared.btn, shared.ghost, shared.small)} onClick={() => setAdding("import")}>
+              <button
+                type="button"
+                className={cx(shared.btn, shared.ghost, shared.small)}
+                onClick={() => setAdding("import")}
+              >
                 Import .conf
               </button>
-              <button className={cx(shared.btn, shared.ghost, shared.small)} onClick={() => setAdding("manual")}>
+              <button
+                type="button"
+                className={cx(shared.btn, shared.ghost, shared.small)}
+                onClick={() => setAdding("manual")}
+              >
                 + Add
               </button>
             </span>
@@ -215,39 +228,43 @@ export function Dashboard({ onServersEmptied, onOffline }: Props) {
               </span>
               <span className={styles.rowActions}>
                 <button
+                  type="button"
                   className={cx(shared.btn, shared.primary, shared.small)}
                   disabled={s.active || busy !== null}
                   onClick={() => act(s.name, () => switchServer(s.name))}
                 >
                   {busy === s.name ? "Switching…" : s.active ? "Connected" : "Connect"}
                 </button>
-                <button
-                  className={cx(shared.btn, shared.ghost, shared.small, shared.danger)}
-                  disabled={busy !== null}
-                  title={`Remove ${s.name}`}
-                  onClick={() =>
-                    act(
-                      `rm:${s.name}`,
-                      async () => {
-                        // removeServer returns the fresh list; apply it directly so
-                        // we never refetch (and never race the parent's unmount when
-                        // the last server is gone).
-                        const left = await removeServer(s.name);
-                        if (left.length === 0) {
-                          onServersEmptied();
-                        } else if (mounted.current) {
-                          setServers(left);
-                          // Removing the active server changes the tunnel — re-read
-                          // status so the hero doesn't keep showing "Connected".
-                          if (s.active) await refresh();
-                        }
-                      },
-                      true, // we've already updated state; skip the trailing refresh
-                    )
-                  }
-                >
-                  {busy === `rm:${s.name}` ? "…" : "Remove"}
-                </button>
+                <Menu
+                  label={`Actions for ${s.name}`}
+                  items={[
+                    { label: "Copy public key", onClick: () => copyKey(s) },
+                    {
+                      label: "Remove",
+                      danger: true,
+                      disabled: busy !== null || s.active,
+                      onClick: () =>
+                        act(
+                          `rm:${s.name}`,
+                          async () => {
+                            // removeServer returns the fresh list; apply it directly so
+                            // we never refetch (and never race the parent's unmount when
+                            // the last server is gone).
+                            const left = await removeServer(s.name);
+                            if (left.length === 0) {
+                              onServersEmptied();
+                            } else if (mounted.current) {
+                              setServers(left);
+                              // Removing the active server changes the tunnel — re-read
+                              // status so the hero doesn't keep showing "Connected".
+                              if (s.active) await refresh();
+                            }
+                          },
+                          true, // we've already updated state; skip the trailing refresh
+                        ),
+                    },
+                  ]}
+                />
               </span>
             </li>
           ))}

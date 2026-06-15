@@ -13,30 +13,14 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
+  /* Leave room for the fixed close button pinned at the top-right. */
+  padding-right: 2.25rem;
 }
 
 .topbarRight {
   display: flex;
   align-items: center;
   gap: 0.5rem;
-}
-
-.close {
-  display: grid;
-  place-items: center;
-  width: 26px;
-  height: 26px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  background: transparent;
-  color: var(--muted);
-  cursor: pointer;
-  transition: background 0.12s ease, color 0.12s ease;
-}
-
-.close:hover {
-  background: var(--danger);
-  color: #fff;
 }
 
 /* ── Status pill ──────────────────────────────────────────────────────────── */
@@ -98,7 +82,9 @@
   height: 14px;
   border-radius: 50%;
   background: var(--muted);
-  transition: background 0.3s ease, box-shadow 0.3s ease;
+  transition:
+    background 0.3s ease,
+    box-shadow 0.3s ease;
 }
 
 .hero-text {
@@ -184,7 +170,9 @@
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  transition: border-color 0.15s ease, background 0.15s ease;
+  transition:
+    border-color 0.15s ease,
+    background 0.15s ease;
 }
 
 .servers li.active {
@@ -222,6 +210,7 @@
 
 .row-actions {
   display: flex;
+  align-items: center;
   gap: 0.4rem;
   flex-shrink: 0;
 }

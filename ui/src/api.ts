@@ -46,26 +46,22 @@ export interface InterfaceStatus {
 }
 
 // --- configuration ---
-export const addServer = (server: ServerSpec) =>
-  invoke<ServerInfo[]>("add_server", { server });
+export const addServer = (server: ServerSpec) => invoke<ServerInfo[]>("add_server", { server });
 
 /** Import a wg-quick `.conf` (full text). The daemon parses, validates, and stores. */
 export const importServer = (name: string, conf: string) =>
   invoke<ServerInfo[]>("import_server", { name, conf });
 
-export const removeServer = (name: string) =>
-  invoke<ServerInfo[]>("remove_server", { name });
+export const removeServer = (name: string) => invoke<ServerInfo[]>("remove_server", { name });
 
 // --- status / control ---
 export const listServers = () => invoke<ServerInfo[]>("list_servers");
 // null when the daemon is reachable but the tunnel is down (disconnected).
 export const getStatus = () => invoke<InterfaceStatus | null>("status");
-export const switchServer = (name: string) =>
-  invoke<string>("switch_server", { name });
+export const switchServer = (name: string) => invoke<string>("switch_server", { name });
 export const disconnect = () => invoke<void>("disconnect");
 
 // --- tray ---
 /** Push the connection summary to the tray (native tooltip on macOS/Windows,
  *  the menu header on Linux). */
-export const setTraySummary = (summary: string) =>
-  invoke<void>("set_tray_summary", { summary });
+export const setTraySummary = (summary: string) => invoke<void>("set_tray_summary", { summary });

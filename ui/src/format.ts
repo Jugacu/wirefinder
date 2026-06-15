@@ -1,4 +1,4 @@
-import { ConnState, InterfaceStatus } from "./api";
+import type { ConnState, InterfaceStatus } from "./api";
 
 /** A connection summary the UI renders, including states the daemon can't report. */
 export type Summary = ConnState | "Disconnected" | "Offline";

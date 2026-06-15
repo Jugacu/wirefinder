@@ -1,0 +1,28 @@
+/* Pinned to the top-right of the window — the same spot on every screen, and
+   stays put when content scrolls. */
+.close {
+  position: absolute;
+  /* Center the control on the dashboard header row (a 1.25rem title at line-height
+     1.5, ≈1.875rem tall) instead of top-aligning it — which left the 26px button
+     sitting ~2px high of the "wirefinder" title and the status pill. */
+  top: calc(1.5rem + (1.25rem * 1.5 - 26px) / 2);
+  right: 1.5rem;
+  z-index: 10;
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  transition:
+    background 0.12s ease,
+    color 0.12s ease;
+}
+
+.close:hover {
+  background: var(--danger);
+  color: #fff;
+}
