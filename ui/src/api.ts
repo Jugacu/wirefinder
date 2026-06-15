@@ -63,3 +63,9 @@ export const getStatus = () => invoke<InterfaceStatus | null>("status");
 export const switchServer = (name: string) =>
   invoke<string>("switch_server", { name });
 export const disconnect = () => invoke<void>("disconnect");
+
+// --- tray ---
+/** Push the connection summary to the tray (native tooltip on macOS/Windows,
+ *  the menu header on Linux). */
+export const setTraySummary = (summary: string) =>
+  invoke<void>("set_tray_summary", { summary });

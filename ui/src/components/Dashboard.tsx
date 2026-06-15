@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   addServer,
   disconnect,
@@ -7,9 +8,10 @@ import {
   listServers,
   removeServer,
   ServerInfo,
+  setTraySummary,
   switchServer,
 } from "../api";
-import { humanizeAge, humanizeBytes, Summary, SUMMARY_LABEL } from "../format";
+import { humanizeAge, humanizeBytes, Summary, SUMMARY_LABEL, trayTooltip } from "../format";
 import { cx } from "../lib/cx";
 import { ImportForm } from "./ImportForm";
 import { ServerForm } from "./ServerForm";
@@ -63,13 +65,18 @@ export function Dashboard({ onServersEmptied, onOffline }: Props) {
       failures.current = 0;
       setServers(srv);
       setStatus(st);
-      setSummary(summarize(st));
+      const next = summarize(st);
+      setSummary(next);
       setError(null);
+      // Keep the tray summary in step with each poll. Fire-and-forget;
+      // a failed tray update must never disrupt the dashboard.
+      setTraySummary(trayTooltip(next, st)).catch(() => {});
     } catch (e) {
       if (!mounted.current) return;
       failures.current += 1;
       setSummary("Offline");
       setError(String(e));
+      setTraySummary(trayTooltip("Offline", null)).catch(() => {});
       if (failures.current >= OFFLINE_THRESHOLD) onOffline();
     }
   }
@@ -112,7 +119,19 @@ export function Dashboard({ onServersEmptied, onOffline }: Props) {
     <main className={styles.dashboard}>
       <header className={styles.topbar}>
         <h1>wirefinder</h1>
-        <span className={cx(styles.pill, styles[`pill${summary}`])}>{SUMMARY_LABEL[summary]}</span>
+        <span className={styles.topbarRight}>
+          <span className={cx(styles.pill, styles[`pill${summary}`])}>{SUMMARY_LABEL[summary]}</span>
+          <button
+            className={styles.close}
+            aria-label="Close"
+            onClick={() => getCurrentWindow().hide()}
+          >
+            <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden>
+              <line x1="1" y1="1" x2="9" y2="9" stroke="currentColor" strokeWidth="1" />
+              <line x1="9" y1="1" x2="1" y2="9" stroke="currentColor" strokeWidth="1" />
+            </svg>
+          </button>
+        </span>
       </header>
 
       <section className={cx(styles.hero, styles[`hero${summary}`])}>

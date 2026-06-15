@@ -15,6 +15,30 @@
   justify-content: space-between;
 }
 
+.topbarRight {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.close {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+
+.close:hover {
+  background: var(--danger);
+  color: #fff;
+}
+
 /* ── Status pill ──────────────────────────────────────────────────────────── */
 
 .pill {
