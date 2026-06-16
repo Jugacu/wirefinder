@@ -6,5 +6,6 @@ Comment=Switch between WireGuard endpoints
 Exec=wirefinder-ui
 Icon=wirefinder
 Terminal=false
+StartupWMClass=wirefinder-ui
 Categories=Network;Security;
 Keywords=vpn;wireguard;tunnel;
