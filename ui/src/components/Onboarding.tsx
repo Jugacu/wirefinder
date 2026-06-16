@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { addServer } from "../api";
+import logoUrl from "../assets/logo.svg";
 import { cx } from "../lib/cx";
 import { CopyField } from "./CopyField";
 import { ImportForm } from "./ImportForm";
@@ -109,27 +110,6 @@ export function Onboarding({ onComplete }: Props) {
 }
 
 function Logo() {
-  return (
-    <svg className={styles.logo} viewBox="0 0 48 48" width="44" height="44" aria-hidden="true">
-      <circle
-        cx="24"
-        cy="24"
-        r="21"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="2"
-        opacity="0.25"
-      />
-      <circle
-        cx="24"
-        cy="24"
-        r="13"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="2"
-        opacity="0.5"
-      />
-      <circle cx="24" cy="24" r="4.5" fill="currentColor" />
-    </svg>
-  );
+  // The app/tray icon, reused as the onboarding mark so branding stays consistent.
+  return <img className={styles.logo} src={logoUrl} alt="" width="56" height="56" />;
 }
