@@ -13,7 +13,7 @@ use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
-use wirefinder_proto::ServerInfo;
+use wirefinder_proto::{ServerDetail, ServerInfo};
 
 use crate::keys;
 
@@ -103,6 +103,26 @@ impl ServerConfig {
             public_key: keys::public_key(&self.private_key)?,
             active,
         })
+    }
+
+    /// The client-facing EDIT view: every editable field, but no secrets. Unlike
+    /// [`info`](Self::info) this exposes the stored PEER public key (not our derived
+    /// one) and never touches the private key, so it cannot fail. A stored preshared
+    /// key becomes a boolean hint; its value is never sent.
+    pub fn detail(&self) -> ServerDetail {
+        ServerDetail {
+            name: self.name.clone(),
+            public_key: self.public_key.clone(),
+            endpoint: self.endpoint.clone(),
+            addresses: self.addresses.clone(),
+            allowed_ips: self.allowed_ips.clone(),
+            // Stored `0` means kernel-assigned; present that as "unset" to the form.
+            listen_port: (self.listen_port != 0).then_some(self.listen_port),
+            mtu: self.mtu,
+            keepalive: self.keepalive,
+            has_preshared_key: self.preshared_key.is_some(),
+            dns: self.dns.clone(),
+        }
     }
 }
 
@@ -271,5 +291,37 @@ mod tests {
         assert_ne!(info.public_key, server.private_key);
         assert!(info.active);
         assert_eq!(info.addresses, server.addresses);
+    }
+
+    #[test]
+    fn detail_omits_secrets_and_exposes_editable_fields() {
+        let mut server = sample_server("nexus");
+        server.preshared_key = Some(keys::generate_private_key());
+        let detail = server.detail();
+
+        // The detail exposes the stored PEER key, NOT our derived public key.
+        assert_eq!(detail.public_key, server.public_key);
+        assert_eq!(detail.endpoint, server.endpoint);
+        assert_eq!(detail.addresses, server.addresses);
+        assert_eq!(detail.allowed_ips, server.allowed_ips);
+        assert_eq!(detail.dns, server.dns);
+        assert_eq!(detail.keepalive, server.keepalive);
+        // A stored preshared key is reduced to a boolean — never its value.
+        assert!(detail.has_preshared_key);
+        let json = serde_json::to_string(&detail).unwrap();
+        assert!(
+            !json.contains(server.preshared_key.as_deref().unwrap()),
+            "preshared key leaked: {json}"
+        );
+        assert!(!json.contains(&server.private_key), "private key leaked");
+    }
+
+    #[test]
+    fn detail_maps_kernel_assigned_port_to_none() {
+        let mut server = sample_server("nexus");
+        server.listen_port = 0; // kernel-assigned
+        assert_eq!(server.detail().listen_port, None);
+        server.listen_port = 51820;
+        assert_eq!(server.detail().listen_port, Some(51820));
     }
 }

@@ -67,12 +67,25 @@ pub enum Request {
     /// The configured servers, each flagged with whether it is currently active.
     /// An empty list means the daemon is reachable but un-onboarded.
     ListServers,
+    /// Full editable detail for one server, to pre-fill an edit form. Carries every
+    /// field a client may change EXCEPT secrets: the private key is never exposed,
+    /// and a stored preshared key is reduced to a `has_preshared_key` flag. Errors
+    /// if the named server is unknown. Returns [`Response::ServerDetail`].
+    GetServer { name: String },
 
     // --- configuration ---
     /// Add (or replace, by name) a tunnel. With `private_key: None` the daemon
     /// generates a fresh keypair for it; otherwise it adopts the supplied key.
     /// Returns the updated server list (each entry carries its derived public key).
     AddServer { server: ServerSpec },
+    /// Edit an EXISTING tunnel in place. `server.name` identifies it and is the one
+    /// field that cannot change (it is the identity/upsert key). Secrets are
+    /// preserved unless explicitly resupplied: `private_key: None` keeps the stored
+    /// key (the UI cannot resupply it), and `preshared_key: None` keeps the stored
+    /// preshared key. A stored preshared key can thus be replaced but not cleared
+    /// through an edit. Editing the currently-active tunnel is rejected. Returns the
+    /// updated server list.
+    EditServer { server: ServerSpec },
     /// Import a standard wg-quick `.conf`: `name` labels the resulting tunnel (the
     /// file has none) and `conf` is the file's full text. The daemon parses it,
     /// adds the tunnel, and returns the updated list. Like `AddServer`, any private
@@ -99,8 +112,10 @@ pub enum Response {
     /// the transport failing entirely (daemon unreachable).
     Disconnected,
     /// The configured servers. Returned by `ListServers`, `AddServer`,
-    /// `ImportServer`, and `RemoveServer`.
+    /// `ImportServer`, `RemoveServer`, and `EditServer`.
     Servers(Vec<ServerInfo>),
+    /// One server's editable detail, secret-free. Returned by `GetServer`.
+    ServerDetail(ServerDetail),
     Switched {
         name: String,
     },
@@ -155,6 +170,40 @@ pub struct ServerInfo {
     /// Our public key for this tunnel (safe to expose).
     pub public_key: String,
     pub active: bool,
+}
+
+/// The editable view of a configured server, used to pre-fill an edit form. Like
+/// [`ServerInfo`] it crosses the daemon → client boundary, so it carries NO secrets:
+/// the tunnel private key never appears, and a stored preshared key is reduced to a
+/// boolean hint. Unlike `ServerInfo` it carries the full set of *editable* fields
+/// (the peer's public key, allowed-IPs, DNS, MTU, keepalive, listen port) so the form
+/// starts from the real stored values. `name` is shown read-only — it is the identity.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct ServerDetail {
+    pub name: String,
+    /// The server's (peer's) WireGuard public key (base64).
+    pub public_key: String,
+    /// `host:port`, e.g. `vpn.example.com:51820`.
+    pub endpoint: String,
+    /// The tunnel address(es) this server assigns to your device.
+    pub addresses: Vec<String>,
+    /// Traffic routed into the tunnel.
+    pub allowed_ips: Vec<String>,
+    /// Listen port; `None`/absent means kernel-assigned.
+    #[serde(default)]
+    pub listen_port: Option<u16>,
+    /// Interface MTU; `None` = kernel default.
+    #[serde(default)]
+    pub mtu: Option<u32>,
+    /// Persistent keepalive in seconds; `None` = off.
+    #[serde(default)]
+    pub keepalive: Option<u16>,
+    /// Whether a preshared key is stored. The key itself is never sent; this only
+    /// lets the form show "a preshared key is set" without revealing it.
+    pub has_preshared_key: bool,
+    /// DNS resolvers routed through the tunnel while this server is active.
+    #[serde(default)]
+    pub dns: Vec<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Eq)]
@@ -216,6 +265,12 @@ mod tests {
                 },
                 r#"{"ImportServer":{"name":"home","conf":"[Interface]"}}"#,
             ),
+            (
+                Request::GetServer {
+                    name: "nexus".into(),
+                },
+                r#"{"GetServer":{"name":"nexus"}}"#,
+            ),
         ];
         for (req, expected) in cases {
             assert_eq!(serde_json::to_string(&req).unwrap(), expected);
@@ -275,6 +330,51 @@ mod tests {
         assert_eq!(serde_json::from_str::<Request>(&wire).unwrap(), req);
     }
 
+    /// `EditServer` carries a full `ServerSpec`, same as `AddServer`; pin that it
+    /// survives a round-trip so the edit contract can't drift silently.
+    #[test]
+    fn edit_server_round_trips() {
+        let req = Request::EditServer {
+            server: ServerSpec {
+                name: "edge".into(),
+                private_key: None,
+                public_key: "abc".into(),
+                endpoint: "vpn.example.com:51820".into(),
+                addresses: vec!["10.0.0.2/24".into()],
+                allowed_ips: vec!["0.0.0.0/0".into()],
+                listen_port: None,
+                mtu: None,
+                keepalive: Some(25),
+                preshared_key: None,
+                dns: vec![],
+            },
+        };
+        let wire = serde_json::to_string(&req).unwrap();
+        assert_eq!(serde_json::from_str::<Request>(&wire).unwrap(), req);
+    }
+
+    /// `ServerDetail` crosses the daemon → client boundary, so its JSON must never
+    /// carry a secret field. It reports only `has_preshared_key`, never the key.
+    #[test]
+    fn server_detail_has_no_secret_field_names() {
+        let detail = ServerDetail {
+            name: "edge".into(),
+            public_key: "abc".into(),
+            endpoint: "vpn.example.com:51820".into(),
+            addresses: vec!["10.0.0.2/24".into()],
+            allowed_ips: vec!["0.0.0.0/0".into()],
+            listen_port: None,
+            mtu: None,
+            keepalive: Some(25),
+            has_preshared_key: true,
+            dns: vec![],
+        };
+        let json = serde_json::to_string(&detail).unwrap();
+        assert!(!json.contains("private_key"), "{json}");
+        assert!(!json.contains("\"preshared_key\""), "{json}");
+        assert!(json.contains("has_preshared_key"), "{json}");
+    }
+
     /// Every response variant must survive a serialize → deserialize round-trip
     /// unchanged. Guards the half of the contract that flows daemon → client.
     #[test]
@@ -291,6 +391,18 @@ mod tests {
             Response::Switched {
                 name: "nexus".into(),
             },
+            Response::ServerDetail(ServerDetail {
+                name: "nexus".into(),
+                public_key: "peerkey".into(),
+                endpoint: "vpn.example.com:51820".into(),
+                addresses: vec!["10.0.0.2/24".into()],
+                allowed_ips: vec!["0.0.0.0/0".into()],
+                listen_port: None,
+                mtu: None,
+                keepalive: Some(25),
+                has_preshared_key: false,
+                dns: vec![],
+            }),
             Response::Error("boom".into()),
         ];
         for resp in cases {

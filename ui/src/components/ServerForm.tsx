@@ -1,5 +1,5 @@
 import { type FormEvent, useState } from "react";
-import type { ServerSpec } from "../api";
+import type { ServerDetail, ServerSpec } from "../api";
 import { cx } from "../lib/cx";
 import forms from "./forms.module.css";
 import shared from "./shared.module.css";
@@ -9,6 +9,9 @@ interface Props {
   onSubmit: (server: ServerSpec) => Promise<void>;
   onCancel?: () => void;
   submitLabel?: string;
+  /** Presence switches the form into edit mode: fields seed from this detail, the
+   *  name is locked, and the key toggle becomes Keep-current / Use-existing. */
+  initial?: ServerDetail;
 }
 
 const csv = (s: string) =>
@@ -30,19 +33,31 @@ const numOrNull = (s: string): number | null | undefined => {
  * public key. The CSV fields are split on submit; cryptographic validation happens
  * daemon-side, so we only enforce that required fields are present and numbers parse.
  */
-export function ServerForm({ onSubmit, onCancel, submitLabel = "Add server" }: Props) {
-  const [name, setName] = useState("");
-  const [publicKey, setPublicKey] = useState("");
-  const [endpoint, setEndpoint] = useState("");
-  const [addresses, setAddresses] = useState("10.0.0.2/24");
-  const [allowedIps, setAllowedIps] = useState("0.0.0.0/0");
-  const [keyMode, setKeyMode] = useState<"generate" | "import">("generate");
+export function ServerForm({ onSubmit, onCancel, submitLabel = "Add server", initial }: Props) {
+  // Presence of `initial` is the single mode flag — edit mode locks the name and
+  // defaults the key to "keep current" (the private key is never resupplied).
+  const editing = initial != null;
+  const numStr = (n: number | null) => (n == null ? "" : String(n));
+
+  const [name, setName] = useState(initial?.name ?? "");
+  const [publicKey, setPublicKey] = useState(initial?.public_key ?? "");
+  const [endpoint, setEndpoint] = useState(initial?.endpoint ?? "");
+  // Fall back to the literal add-mode defaults only when there's no `initial`.
+  const [addresses, setAddresses] = useState(
+    initial ? initial.addresses.join(", ") : "10.0.0.2/24",
+  );
+  const [allowedIps, setAllowedIps] = useState(
+    initial ? initial.allowed_ips.join(", ") : "0.0.0.0/0",
+  );
+  const [keyMode, setKeyMode] = useState<"generate" | "import" | "keep">(
+    editing ? "keep" : "generate",
+  );
   const [privateKey, setPrivateKey] = useState("");
-  const [dns, setDns] = useState("");
-  const [presharedKey, setPresharedKey] = useState("");
-  const [keepalive, setKeepalive] = useState("25");
-  const [listenPort, setListenPort] = useState("");
-  const [mtu, setMtu] = useState("");
+  const [dns, setDns] = useState(initial ? initial.dns.join(", ") : "");
+  const [presharedKey, setPresharedKey] = useState(""); // always blank; secret never returned
+  const [keepalive, setKeepalive] = useState(initial ? numStr(initial.keepalive) : "25");
+  const [listenPort, setListenPort] = useState(initial ? numStr(initial.listen_port) : "");
+  const [mtu, setMtu] = useState(initial ? numStr(initial.mtu) : "");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -98,8 +113,11 @@ export function ServerForm({ onSubmit, onCancel, submitLabel = "Add server" }: P
           value={name}
           onChange={(e) => setName(e.target.value)}
           placeholder="home"
-          autoFocus
+          autoFocus={!editing}
+          readOnly={editing}
+          aria-readonly={editing}
         />
+        {editing && <small>The name identifies this server and can't be changed.</small>}
       </label>
 
       <label className={forms.field}>
@@ -109,6 +127,8 @@ export function ServerForm({ onSubmit, onCancel, submitLabel = "Add server" }: P
           onChange={(e) => setPublicKey(e.target.value)}
           placeholder="base64 public key from your server"
           spellCheck={false}
+          // In edit mode the read-only name shouldn't grab focus; start here instead.
+          autoFocus={editing}
         />
       </label>
 
@@ -150,14 +170,25 @@ export function ServerForm({ onSubmit, onCancel, submitLabel = "Add server" }: P
         <span>Key</span>
         {/* biome-ignore lint/a11y/useSemanticElements: a segmented toggle, not a form fieldset; <fieldset> would impose unwanted default chrome */}
         <div className={forms.segmented} role="group" aria-label="Key source">
-          <button
-            type="button"
-            aria-pressed={keyMode === "generate"}
-            className={keyMode === "generate" ? forms.active : undefined}
-            onClick={() => setKeyMode("generate")}
-          >
-            Generate
-          </button>
+          {editing ? (
+            <button
+              type="button"
+              aria-pressed={keyMode === "keep"}
+              className={keyMode === "keep" ? forms.active : undefined}
+              onClick={() => setKeyMode("keep")}
+            >
+              Keep current
+            </button>
+          ) : (
+            <button
+              type="button"
+              aria-pressed={keyMode === "generate"}
+              className={keyMode === "generate" ? forms.active : undefined}
+              onClick={() => setKeyMode("generate")}
+            >
+              Generate
+            </button>
+          )}
           <button
             type="button"
             aria-pressed={keyMode === "import"}
@@ -168,9 +199,11 @@ export function ServerForm({ onSubmit, onCancel, submitLabel = "Add server" }: P
           </button>
         </div>
         <small>
-          {keyMode === "generate"
-            ? "We'll create a keypair; register the public key on your server after adding."
-            : "Use a private key you already registered with your server."}
+          {keyMode === "keep"
+            ? "Keep the private key already stored for this server."
+            : keyMode === "generate"
+              ? "We'll create a keypair; register the public key on your server after adding."
+              : "Use a private key you already registered with your server."}
         </small>
       </div>
 
@@ -203,9 +236,20 @@ export function ServerForm({ onSubmit, onCancel, submitLabel = "Add server" }: P
           <input
             value={presharedKey}
             onChange={(e) => setPresharedKey(e.target.value)}
-            placeholder="optional extra symmetric key"
+            placeholder={
+              initial?.has_preshared_key
+                ? "leave blank to keep existing"
+                : "optional extra symmetric key"
+            }
             spellCheck={false}
           />
+          {/* A stored PSK is never returned, so a blank field means "keep it" on edit.
+              This form can therefore replace a PSK but not clear one. */}
+          {initial?.has_preshared_key && (
+            <small>
+              A pre-shared key is stored. Leave blank to keep it, or type a new one to replace it.
+            </small>
+          )}
         </label>
         <label className={forms.field}>
           <span>Keepalive (seconds)</span>

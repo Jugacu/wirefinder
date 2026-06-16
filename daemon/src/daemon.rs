@@ -6,10 +6,11 @@
 use std::time::{Duration, Instant, SystemTime};
 
 use wirefinder_proto::{
-    ConnState, InterfaceStatus, PeerStatus, Request, Response, ServerInfo, ServerSpec,
+    ConnState, InterfaceStatus, PeerStatus, Request, Response, ServerDetail, ServerInfo, ServerSpec,
 };
 
 use crate::config::{Config, ServerConfig, Store};
+use crate::keys;
 use crate::wgconf;
 use crate::wireguard::{self, LivePeer, Wireguard};
 
@@ -153,13 +154,87 @@ impl<W: Wireguard> Daemon<W> {
         self.persist()
     }
 
+    /// The editable detail for one server, to pre-fill an edit form. Secret-free.
+    fn get_server(&self, name: &str) -> Result<ServerDetail, String> {
+        self.cfg
+            .find_server(name)
+            .map(ServerConfig::detail)
+            .ok_or_else(|| format!("unknown server '{name}'"))
+    }
+
+    /// Edit an existing tunnel in place. The name is the identity (it cannot change);
+    /// the server must already exist and must not be the active tunnel. Secrets are
+    /// preserved unless explicitly resupplied — `None` keeps the stored value, so the
+    /// UI (which never sees the private key) can edit other fields without rotating
+    /// it. Validates and persists, like [`add_server`](Self::add_server).
+    fn edit_server(&mut self, spec: ServerSpec) -> Result<(), String> {
+        let name = spec.name.trim().to_string();
+        if name.is_empty() {
+            return Err("server name must not be empty".into());
+        }
+
+        // Edit never creates: the server must already exist. Clone the stored config
+        // (and its secrets) out before we mutate — mirrors how `SwitchServer` clones
+        // before acting, and sidesteps borrowing `self.cfg` across the mutation.
+        let existing = self
+            .cfg
+            .find_server(&name)
+            .ok_or_else(|| format!("unknown server '{name}'"))?
+            .clone();
+
+        // Refuse to edit the live tunnel: a reconfigure-in-place could change the key
+        // or addresses of the connection the user is currently relying on.
+        let derived = keys::public_key(&existing.private_key)?;
+        if self.active_public_key().as_deref() == Some(derived.as_str()) {
+            return Err(format!(
+                "server '{name}' is the active tunnel; disconnect or switch away before editing"
+            ));
+        }
+
+        // `None` (or an empty string, as in `add_server`) preserves the stored secret;
+        // a non-empty value replaces it.
+        let private_key = spec
+            .private_key
+            .map(|k| k.trim().to_string())
+            .filter(|k| !k.is_empty())
+            .unwrap_or(existing.private_key);
+        let preshared_key = match spec.preshared_key.map(|k| k.trim().to_string()) {
+            Some(k) if !k.is_empty() => Some(k),
+            _ => existing.preshared_key,
+        };
+
+        let server = ServerConfig {
+            name,
+            private_key,
+            public_key: spec.public_key,
+            endpoint: spec.endpoint,
+            addresses: spec.addresses,
+            allowed_ips: spec.allowed_ips,
+            listen_port: spec.listen_port.unwrap_or(0),
+            mtu: spec.mtu,
+            keepalive: spec.keepalive,
+            preshared_key,
+            dns: spec.dns,
+        };
+        // Reject malformed input before we persist anything.
+        wireguard::validate_server(&server)?;
+        self.cfg.upsert_server(server); // replace-by-name; existence enforced above
+        self.persist()
+    }
+
+    /// OUR public key currently on the live interface, or `None` if the interface is
+    /// down/unreadable. This uniquely identifies the active tunnel.
+    fn active_public_key(&self) -> Option<String> {
+        self.wg.status().ok().and_then(|live| live.public_key)
+    }
+
     /// The configured servers, each flagged with whether it is the active tunnel.
     /// A tunnel is active when OUR public key currently on the interface matches its
     /// own derived public key — which is unique per tunnel, so two tunnels that
     /// share a peer (server) public key are still told apart. Best-effort: if the
     /// interface is down/unreadable, nothing is active.
     fn list_servers(&self) -> Vec<ServerInfo> {
-        let active_key = self.wg.status().ok().and_then(|live| live.public_key);
+        let active_key = self.active_public_key();
 
         self.cfg
             .servers
@@ -209,7 +284,17 @@ impl<W: Wireguard> Daemon<W> {
 
             Request::ListServers => Response::Servers(self.list_servers()),
 
+            Request::GetServer { name } => match self.get_server(&name) {
+                Ok(detail) => Response::ServerDetail(detail),
+                Err(e) => Response::Error(e),
+            },
+
             Request::AddServer { server } => match self.add_server(server) {
+                Ok(()) => Response::Servers(self.list_servers()),
+                Err(e) => Response::Error(e),
+            },
+
+            Request::EditServer { server } => match self.edit_server(server) {
                 Ok(()) => Response::Servers(self.list_servers()),
                 Err(e) => Response::Error(e),
             },
@@ -706,8 +791,10 @@ mod tests {
     fn the_private_key_never_appears_in_any_client_facing_response() {
         let (_dir, mut d) = fresh_daemon();
         let secret = keys::generate_private_key();
+        let psk = keys::generate_private_key();
         let mut spec = server("nexus");
         spec.private_key = Some(secret.clone());
+        spec.preshared_key = Some(psk.clone());
         d.handle(Request::AddServer {
             server: spec.clone(),
         });
@@ -718,13 +805,23 @@ mod tests {
         let requests = [
             Request::ListServers,
             Request::Status,
-            Request::AddServer { server: spec },
+            Request::AddServer {
+                server: spec.clone(),
+            },
+            Request::EditServer { server: spec },
+            Request::GetServer {
+                name: "nexus".into(),
+            },
         ];
         for req in requests {
             let json = serde_json::to_string(&d.handle(req)).unwrap();
             assert!(
                 !json.contains(&secret),
                 "private key leaked in response: {json}"
+            );
+            assert!(
+                !json.contains(&psk),
+                "preshared key leaked in response: {json}"
             );
         }
     }
@@ -745,6 +842,172 @@ mod tests {
             panic!("expected Status");
         };
         assert_eq!(status.peers[0].state, ConnState::Never);
+    }
+
+    // ── edit / get ───────────────────────────────────────────────────────────────
+
+    fn detail(d: &mut Daemon<FakeWireguard>, name: &str) -> ServerDetail {
+        let Response::ServerDetail(det) = d.handle(Request::GetServer { name: name.into() }) else {
+            panic!("expected ServerDetail");
+        };
+        det
+    }
+
+    /// An edit that supplies no private key must keep the stored one — editing other
+    /// fields must never rotate the keypair (the UI can't resupply the secret).
+    #[test]
+    fn edit_preserves_the_private_key_when_none_is_supplied() {
+        let (_dir, mut d) = fresh_daemon();
+        let secret = keys::generate_private_key();
+        let mut spec = server("nexus");
+        spec.private_key = Some(secret.clone());
+        d.handle(Request::AddServer { server: spec });
+
+        let mut edit = server("nexus");
+        edit.private_key = None;
+        edit.endpoint = "198.51.100.20:51820".into();
+        let Response::Servers(_) = d.handle(Request::EditServer { server: edit }) else {
+            panic!("expected Servers");
+        };
+
+        assert_eq!(d.cfg.servers[0].private_key, secret, "key preserved");
+        assert_eq!(d.cfg.servers[0].endpoint, "198.51.100.20:51820");
+    }
+
+    #[test]
+    fn edit_adopts_a_supplied_private_key() {
+        let (_dir, mut d) = onboarded();
+        let replacement = keys::generate_private_key();
+        let mut edit = server("nexus");
+        edit.private_key = Some(replacement.clone());
+        d.handle(Request::EditServer { server: edit });
+        assert_eq!(d.cfg.servers[0].private_key, replacement);
+    }
+
+    #[test]
+    fn edit_preserves_the_preshared_key_when_none_is_supplied() {
+        let (_dir, mut d) = fresh_daemon();
+        let psk = keys::generate_private_key();
+        let mut spec = server("nexus");
+        spec.preshared_key = Some(psk.clone());
+        d.handle(Request::AddServer { server: spec });
+
+        let mut edit = server("nexus");
+        edit.preshared_key = None;
+        d.handle(Request::EditServer { server: edit });
+        assert_eq!(d.cfg.servers[0].preshared_key, Some(psk), "PSK preserved");
+    }
+
+    #[test]
+    fn edit_adopts_a_supplied_preshared_key() {
+        let (_dir, mut d) = onboarded();
+        let psk = keys::generate_private_key();
+        let mut edit = server("nexus");
+        edit.preshared_key = Some(psk.clone());
+        d.handle(Request::EditServer { server: edit });
+        assert_eq!(d.cfg.servers[0].preshared_key, Some(psk));
+    }
+
+    #[test]
+    fn edit_of_an_unknown_server_errors_and_persists_nothing() {
+        let (_dir, mut d) = fresh_daemon();
+        let Response::Error(e) = d.handle(Request::EditServer {
+            server: server("ghost"),
+        }) else {
+            panic!("expected Error");
+        };
+        assert!(e.contains("unknown server"), "{e}");
+        assert!(d.cfg.servers.is_empty());
+    }
+
+    #[test]
+    fn edit_of_the_active_tunnel_is_rejected() {
+        let (_dir, mut d) = onboarded();
+        d.handle(Request::SwitchServer {
+            name: "nexus".into(),
+        });
+        let mut edit = server("nexus");
+        edit.endpoint = "new.example.com:51820".into();
+        let Response::Error(e) = d.handle(Request::EditServer { server: edit }) else {
+            panic!("expected Error");
+        };
+        assert!(e.contains("active tunnel"), "{e}");
+        assert_eq!(
+            d.cfg.servers[0].endpoint, "198.51.100.10:51820",
+            "rejected edit must not persist"
+        );
+    }
+
+    /// The active check must key off the EDITED server, not "is anything connected".
+    /// Editing a different (inactive) server while one is active must succeed.
+    #[test]
+    fn edit_of_a_non_active_tunnel_while_another_is_active_succeeds() {
+        let (_dir, mut d) = onboarded(); // "nexus"
+        let mut edge = server("edge");
+        edge.public_key = "XhbwkaURz3Tcc2A7TmV89aB+cHOJayNRiSH2My/r1Bk=".into();
+        edge.addresses = vec!["192.168.50.5/24".into()];
+        d.handle(Request::AddServer { server: edge });
+        d.handle(Request::SwitchServer {
+            name: "nexus".into(),
+        });
+
+        let mut edit = server("edge");
+        edit.public_key = "XhbwkaURz3Tcc2A7TmV89aB+cHOJayNRiSH2My/r1Bk=".into();
+        edit.addresses = vec!["192.168.50.5/24".into()];
+        edit.endpoint = "198.51.100.30:51820".into();
+        let Response::Servers(_) = d.handle(Request::EditServer { server: edit }) else {
+            panic!("expected Servers");
+        };
+        let edged = d.cfg.servers.iter().find(|s| s.name == "edge").unwrap();
+        assert_eq!(edged.endpoint, "198.51.100.30:51820");
+    }
+
+    #[test]
+    fn edit_rejects_a_bad_address_and_persists_nothing() {
+        let (_dir, mut d) = onboarded();
+        let mut edit = server("nexus");
+        edit.addresses = vec!["not-a-cidr".into()];
+        let Response::Error(e) = d.handle(Request::EditServer { server: edit }) else {
+            panic!("expected Error");
+        };
+        assert!(e.contains("address"), "{e}");
+        assert_eq!(
+            d.cfg.servers[0].addresses,
+            vec!["10.0.0.2/24".to_string()],
+            "rejected edit must not persist"
+        );
+    }
+
+    #[test]
+    fn get_server_returns_detail_for_a_known_server() {
+        let (_dir, mut d) = onboarded();
+        let det = detail(&mut d, "nexus");
+        assert_eq!(det.name, "nexus");
+        // The peer public key the server was added with — not our derived key.
+        assert_eq!(det.public_key, PEER_KEY);
+        assert_eq!(det.endpoint, "198.51.100.10:51820");
+        assert_eq!(det.keepalive, Some(25));
+        assert!(!det.has_preshared_key);
+    }
+
+    #[test]
+    fn get_server_reports_a_stored_preshared_key_as_a_flag() {
+        let (_dir, mut d) = fresh_daemon();
+        let mut spec = server("nexus");
+        spec.preshared_key = Some(keys::generate_private_key());
+        d.handle(Request::AddServer { server: spec });
+        assert!(detail(&mut d, "nexus").has_preshared_key);
+    }
+
+    #[test]
+    fn get_server_unknown_errors() {
+        let (_dir, mut d) = onboarded();
+        let Response::Error(e) = d.handle(Request::GetServer {
+            name: "ghost".into(),
+        }) else {
+            panic!("expected Error");
+        };
+        assert!(e.contains("unknown server"), "{e}");
     }
 
     // ── import ───────────────────────────────────────────────────────────────────

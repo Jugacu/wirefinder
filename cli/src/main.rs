@@ -5,7 +5,9 @@
 use std::path::Path;
 use std::process::exit;
 
-use wirefinder_proto::{ConnState, PeerStatus, Request, Response, ServerInfo, ServerSpec, request};
+use wirefinder_proto::{
+    ConnState, PeerStatus, Request, Response, ServerDetail, ServerInfo, ServerSpec, request,
+};
 
 fn humanize(bytes: u64) -> String {
     if bytes < 1024 {
@@ -58,6 +60,31 @@ fn print_servers(servers: &[ServerInfo]) {
     }
 }
 
+/// The editable detail of one server. Secret-free: the private key is never sent and
+/// a stored preshared key shows only as "(set)".
+fn print_detail(d: &ServerDetail) {
+    println!("{}", d.name);
+    println!("    peer pubkey  {}", d.public_key);
+    println!("    endpoint     {}", d.endpoint);
+    println!("    addresses    {}", d.addresses.join(", "));
+    println!("    allowed ips  {}", d.allowed_ips.join(", "));
+    if let Some(port) = d.listen_port {
+        println!("    listen port  {port}");
+    }
+    if let Some(mtu) = d.mtu {
+        println!("    mtu          {mtu}");
+    }
+    if let Some(ka) = d.keepalive {
+        println!("    keepalive    {ka}s");
+    }
+    if !d.dns.is_empty() {
+        println!("    dns          {}", d.dns.join(", "));
+    }
+    if d.has_preshared_key {
+        println!("    preshared    (set)");
+    }
+}
+
 fn print_usage() {
     println!("usage:");
     println!("  wirefinder add <name> <pubkey> <endpoint> <address> [allowed_ips]");
@@ -65,6 +92,7 @@ fn print_usage() {
     println!("  wirefinder import <file.conf> [name]            import a wg-quick config");
     println!("  wirefinder remove <name>                        forget a server");
     println!("  wirefinder servers                              list servers");
+    println!("  wirefinder get <name>                           show a server's editable detail");
     println!("  wirefinder switch <name>                        connect to a server");
     println!("  wirefinder disconnect                           tear the tunnel down");
     println!("  wirefinder info                                 live tunnel status");
@@ -79,6 +107,7 @@ fn parse_request(args: &[String]) -> Option<Request> {
         [cmd] if cmd == "disconnect" => Some(Request::Disconnect),
         [cmd, name] if cmd == "switch" => Some(Request::SwitchServer { name: name.clone() }),
         [cmd, name] if cmd == "remove" => Some(Request::RemoveServer { name: name.clone() }),
+        [cmd, name] if cmd == "get" => Some(Request::GetServer { name: name.clone() }),
         [cmd, name, public_key, endpoint, address, rest @ ..] if cmd == "add" => {
             // allowed_ips: optional comma-separated trailing arg; default to a full tunnel.
             let allowed_ips = match rest {
@@ -130,6 +159,7 @@ fn render(response: Response) {
             }
         }
         Response::Servers(servers) => print_servers(&servers),
+        Response::ServerDetail(d) => print_detail(&d),
         Response::Switched { name } => println!("switched to {name}"),
         Response::Disconnected => println!("disconnected — interface is down"),
         Response::Error(e) => {

@@ -4,7 +4,7 @@ use tauri::{
     Manager,
 };
 use wirefinder_proto::{
-    request, InterfaceStatus, Request, Response, ServerInfo, ServerSpec,
+    request, InterfaceStatus, Request, Response, ServerDetail, ServerInfo, ServerSpec,
 };
 
 // Each command unwraps the daemon's tagged Response into the ONE payload the
@@ -18,6 +18,24 @@ fn unexpected() -> String {
 fn add_server(server: ServerSpec) -> Result<Vec<ServerInfo>, String> {
     match request(&Request::AddServer { server })? {
         Response::Servers(s) => Ok(s),
+        Response::Error(e) => Err(e),
+        _ => Err(unexpected()),
+    }
+}
+
+#[tauri::command]
+fn edit_server(server: ServerSpec) -> Result<Vec<ServerInfo>, String> {
+    match request(&Request::EditServer { server })? {
+        Response::Servers(s) => Ok(s),
+        Response::Error(e) => Err(e),
+        _ => Err(unexpected()),
+    }
+}
+
+#[tauri::command]
+fn get_server(name: String) -> Result<ServerDetail, String> {
+    match request(&Request::GetServer { name })? {
+        Response::ServerDetail(d) => Ok(d),
         Response::Error(e) => Err(e),
         _ => Err(unexpected()),
     }
@@ -145,6 +163,8 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             add_server,
+            edit_server,
+            get_server,
             import_server,
             remove_server,
             list_servers,

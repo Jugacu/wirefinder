@@ -164,8 +164,7 @@
 
 .servers li {
   display: flex;
-  align-items: center;
-  gap: 0.75rem;
+  flex-direction: column;
   padding: 0.7rem 0.85rem;
   background: var(--surface);
   border: 1px solid var(--border);
@@ -173,6 +172,20 @@
   transition:
     border-color 0.15s ease,
     background 0.15s ease;
+}
+
+.server-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+/* The edit form, rendered inside the row's own card. A divider separates it from
+   the row above so it reads as belonging to this server. */
+.edit-form {
+  margin-top: 0.75rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--border);
 }
 
 .servers li.active {
@@ -236,7 +249,7 @@
 /* ── Responsive: narrow windows (down to the 380px floor) ─────────────────── */
 
 @media (max-width: 420px) {
-  .servers li {
+  .server-row {
     flex-wrap: wrap;
   }
   .row-actions {

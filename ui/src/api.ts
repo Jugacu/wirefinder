@@ -29,6 +29,23 @@ export interface ServerInfo {
   active: boolean;
 }
 
+/** The editable view of a stored tunnel: every field in `ServerSpec` except the
+ *  secrets. The private key is never returned; `has_preshared_key` only reports
+ *  whether one is stored (the value is never sent). Mirrors
+ *  `wirefinder_proto::ServerDetail`. */
+export interface ServerDetail {
+  name: string;
+  public_key: string; // the server's (peer's) public key
+  endpoint: string;
+  addresses: string[];
+  allowed_ips: string[];
+  listen_port: number | null;
+  mtu: number | null;
+  keepalive: number | null;
+  has_preshared_key: boolean;
+  dns: string[];
+}
+
 export interface PeerStatus {
   public_key: string;
   endpoint: string | null; // Rust Option<String> → null when absent
@@ -47,6 +64,14 @@ export interface InterfaceStatus {
 
 // --- configuration ---
 export const addServer = (server: ServerSpec) => invoke<ServerInfo[]>("add_server", { server });
+
+/** Fetch the editable detail for one server (no secrets) to seed the edit form. */
+export const getServer = (name: string) => invoke<ServerDetail>("get_server", { name });
+
+/** Save edits to an existing server (identified by `server.name`). A null
+ *  `private_key`/`preshared_key` means "keep the stored value". The daemon rejects
+ *  editing the active tunnel. */
+export const editServer = (server: ServerSpec) => invoke<ServerInfo[]>("edit_server", { server });
 
 /** Import a wg-quick `.conf` (full text). The daemon parses, validates, and stores. */
 export const importServer = (name: string, conf: string) =>

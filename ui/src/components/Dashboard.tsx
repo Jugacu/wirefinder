@@ -2,10 +2,13 @@ import { useEffect, useRef, useState } from "react";
 import {
   addServer,
   disconnect,
+  editServer,
+  getServer,
   getStatus,
   type InterfaceStatus,
   listServers,
   removeServer,
+  type ServerDetail,
   type ServerInfo,
   setTraySummary,
   switchServer,
@@ -50,6 +53,9 @@ export function Dashboard({ onServersEmptied, onOffline }: Props) {
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [adding, setAdding] = useState<AddMode>(null);
+  // The server being edited (its secret-free detail), or null when no edit form is
+  // open. The form renders inside that server's own row; only one is ever open.
+  const [editing, setEditing] = useState<ServerDetail | null>(null);
 
   // Refs that the polling closure reads without needing to be re-created: whether
   // we're still mounted, whether an action is in flight (so the poll backs off),
@@ -57,6 +63,15 @@ export function Dashboard({ onServersEmptied, onOffline }: Props) {
   const mounted = useRef(true);
   const busyRef = useRef(false);
   const failures = useRef(0);
+  // The open edit form's wrapper, so we can scroll it into view when it opens.
+  const editFormRef = useRef<HTMLDivElement | null>(null);
+
+  // When an edit form opens, bring its top into view — the edited row may be far
+  // down the list. Keyed on the edited name so re-opening a different row re-scrolls.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: scroll only when the edited server changes, not on every detail update.
+  useEffect(() => {
+    if (editing) editFormRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, [editing?.name]);
 
   async function refresh() {
     try {
@@ -130,7 +145,7 @@ export function Dashboard({ onServersEmptied, onOffline }: Props) {
   return (
     <main className={styles.dashboard}>
       <header className={styles.topbar}>
-        <h1>wirefinder</h1>
+        <h1>Wirefinder</h1>
         <span className={styles.topbarRight}>
           <span className={cx(styles.pill, styles[`pill${summary}`])}>
             {SUMMARY_LABEL[summary]}
@@ -174,14 +189,20 @@ export function Dashboard({ onServersEmptied, onOffline }: Props) {
               <button
                 type="button"
                 className={cx(shared.btn, shared.ghost, shared.small)}
-                onClick={() => setAdding("import")}
+                onClick={() => {
+                  setEditing(null);
+                  setAdding("import");
+                }}
               >
                 Import .conf
               </button>
               <button
                 type="button"
                 className={cx(shared.btn, shared.ghost, shared.small)}
-                onClick={() => setAdding("manual")}
+                onClick={() => {
+                  setEditing(null);
+                  setAdding("manual");
+                }}
               >
                 + Add
               </button>
@@ -218,54 +239,89 @@ export function Dashboard({ onServersEmptied, onOffline }: Props) {
         <ul className={styles.servers}>
           {servers.map((s) => (
             <li key={s.name} className={s.active ? styles.active : undefined}>
-              <span className={styles.dot} aria-hidden>
-                {s.active ? "●" : "○"}
-              </span>
-              <span className={styles.serverMeta}>
-                <span className={styles.name}>{s.name}</span>
-                <span className={styles.endpoint}>{s.endpoint}</span>
-                <span className={styles.endpoint}>{s.addresses.join(", ")}</span>
-              </span>
-              <span className={styles.rowActions}>
-                <button
-                  type="button"
-                  className={cx(shared.btn, shared.primary, shared.small)}
-                  disabled={s.active || busy !== null}
-                  onClick={() => act(s.name, () => switchServer(s.name))}
-                >
-                  {busy === s.name ? "Switching…" : s.active ? "Connected" : "Connect"}
-                </button>
-                <Menu
-                  label={`Actions for ${s.name}`}
-                  items={[
-                    { label: "Copy public key", onClick: () => copyKey(s) },
-                    {
-                      label: "Remove",
-                      danger: true,
-                      disabled: busy !== null || s.active,
-                      onClick: () =>
-                        act(
-                          `rm:${s.name}`,
-                          async () => {
-                            // removeServer returns the fresh list; apply it directly so
-                            // we never refetch (and never race the parent's unmount when
-                            // the last server is gone).
-                            const left = await removeServer(s.name);
-                            if (left.length === 0) {
-                              onServersEmptied();
-                            } else if (mounted.current) {
-                              setServers(left);
-                              // Removing the active server changes the tunnel — re-read
-                              // status so the hero doesn't keep showing "Connected".
-                              if (s.active) await refresh();
-                            }
-                          },
-                          true, // we've already updated state; skip the trailing refresh
-                        ),
-                    },
-                  ]}
-                />
-              </span>
+              <div className={styles.serverRow}>
+                <span className={styles.dot} aria-hidden>
+                  {s.active ? "●" : "○"}
+                </span>
+                <span className={styles.serverMeta}>
+                  <span className={styles.name}>{s.name}</span>
+                  <span className={styles.endpoint}>{s.endpoint}</span>
+                  <span className={styles.endpoint}>{s.addresses.join(", ")}</span>
+                </span>
+                <span className={styles.rowActions}>
+                  <button
+                    type="button"
+                    className={cx(shared.btn, shared.primary, shared.small)}
+                    disabled={s.active || busy !== null}
+                    onClick={() => act(s.name, () => switchServer(s.name))}
+                  >
+                    {busy === s.name ? "Switching…" : s.active ? "Connected" : "Connect"}
+                  </button>
+                  <Menu
+                    label={`Actions for ${s.name}`}
+                    items={[
+                      {
+                        // Editing the active tunnel is disallowed (daemon rejects it
+                        // too); mirror Remove's disabled rule.
+                        label: busy === `edit:${s.name}` ? "Opening…" : "Edit",
+                        disabled: busy !== null || s.active,
+                        onClick: () =>
+                          act(
+                            `edit:${s.name}`,
+                            async () => {
+                              const detail = await getServer(s.name);
+                              if (!mounted.current) return;
+                              setAdding(null); // only one form open at a time
+                              setEditing(detail);
+                            },
+                            true, // we only opened a form; no list refresh
+                          ),
+                      },
+                      { label: "Copy public key", onClick: () => copyKey(s) },
+                      {
+                        label: "Remove",
+                        danger: true,
+                        disabled: busy !== null || s.active,
+                        onClick: () =>
+                          act(
+                            `rm:${s.name}`,
+                            async () => {
+                              // removeServer returns the fresh list; apply it directly so
+                              // we never refetch (and never race the parent's unmount when
+                              // the last server is gone).
+                              const left = await removeServer(s.name);
+                              if (left.length === 0) {
+                                onServersEmptied();
+                              } else if (mounted.current) {
+                                setServers(left);
+                              }
+                              // If we are editing this server we unset editing so it stays consistent
+                              if (editing?.name === s.name) {
+                                setEditing(null);
+                              }
+                            },
+                            true, // we've already updated state; skip the trailing refresh
+                          ),
+                      },
+                    ]}
+                  />
+                </span>
+              </div>
+
+              {editing?.name === s.name && (
+                <div className={styles.editForm} ref={editFormRef}>
+                  <ServerForm
+                    initial={editing}
+                    submitLabel="Save changes"
+                    onCancel={() => setEditing(null)}
+                    onSubmit={async (server) => {
+                      await editServer(server);
+                      setEditing(null);
+                      await refresh();
+                    }}
+                  />
+                </div>
+              )}
             </li>
           ))}
         </ul>
