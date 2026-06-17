@@ -1,3 +1,7 @@
+<p align="center">
+    <img src="ui/src-tauri/icons/128x128.png" alt="wirefinder logo" width="128" />
+</p>
+
 # wirefinder
 
 A WireGuard endpoint switcher for Linux: a privileged daemon that owns the tunnel
@@ -14,7 +18,7 @@ everything itself.
 ## Architecture
 
 ```
-┌─────────────┐         Unix socket          ┌──────────────────────┐
+┌─────────────┐         Unix socket           ┌──────────────────────┐
 │  GUI (Tauri)│  ───  /run/wirefinder/  ───▶  │  wirefinderd (root)  │
 │  CLI        │       wirefinderd.sock        │  owns wg0, the keys, │
 └─────────────┘   one JSON request/response   │  and /var/lib state  │
