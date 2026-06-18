@@ -131,9 +131,9 @@ pub fn run() {
             // A minimal tray: a (disabled) status header that we keep updated
             // from the frontend, then show-the-window / quit.
             let status =
-                MenuItem::with_id(app, "status", "wirefinder — starting…", false, None::<&str>)?;
+                MenuItem::with_id(app, "status", "Wirefinder — starting…", false, None::<&str>)?;
             let sep = PredefinedMenuItem::separator(app)?;
-            let show = MenuItem::with_id(app, "show", "Show wirefinder", true, None::<&str>)?;
+            let show = MenuItem::with_id(app, "show", "Show Wirefinder", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&status, &sep, &show, &quit])?;
             // Stash the header so set_tray_summary can rewrite it on each poll.
@@ -141,7 +141,7 @@ pub fn run() {
 
             TrayIconBuilder::with_id("main")
                 .icon(app.default_window_icon().unwrap().clone())
-                .tooltip("wirefinder")
+                .tooltip("Wirefinder")
                 .menu(&menu)
                 .on_menu_event(|app, event| match event.id.as_ref() {
                     "quit" => app.exit(0),

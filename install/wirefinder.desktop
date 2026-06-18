@@ -1,6 +1,6 @@
 [Desktop Entry]
 Type=Application
-Name=wirefinder
+Name=Wirefinder
 GenericName=WireGuard switcher
 Comment=Switch between WireGuard endpoints
 Exec=wirefinder-ui

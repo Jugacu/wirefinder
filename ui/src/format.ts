@@ -28,7 +28,7 @@ export function humanizeBytes(bytes: number): string {
 /** The tray icon's hover summary: a status headline plus, when connected, the
  *  active peer's traffic and handshake age — mirroring the dashboard hero. */
 export function trayTooltip(summary: Summary, status: InterfaceStatus | null): string {
-  const head = `wirefinder — ${SUMMARY_LABEL[summary]}`;
+  const head = `Wirefinder — ${SUMMARY_LABEL[summary]}`;
   if (!status) return head;
   const peer = status.peers.find((p) => p.state === "Alive") ?? status.peers[0];
   if (!peer) return head;
