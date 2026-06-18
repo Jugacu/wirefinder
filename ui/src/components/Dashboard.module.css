@@ -90,7 +90,6 @@
 .hero-text {
   display: flex;
   flex-direction: column;
-  gap: 0.15rem;
   flex: 1;
 }
 

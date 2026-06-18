@@ -33,7 +33,7 @@
 
 .field textarea {
   font: inherit;
-  font-family: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace;
+  font-family: "Geist Mono", ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace;
   font-size: 0.82rem;
   background: var(--bg);
   border: 1px solid var(--border);

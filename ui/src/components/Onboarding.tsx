@@ -32,7 +32,7 @@ export function Onboarding({ onComplete }: Props) {
     <main className={styles.onboarding}>
       <header className={styles.onboardingHead}>
         <Logo />
-        <h1>wirefinder</h1>
+        <h1>Wirefinder</h1>
         <p className={styles.tagline}>A calm home for your WireGuard tunnels.</p>
       </header>
 

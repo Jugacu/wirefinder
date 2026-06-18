@@ -1,4 +1,4 @@
-# wirefinder — desktop GUI
+# Wirefinder — desktop GUI
 
 The Tauri + React front end for wirefinder. It talks to `wirefinderd` over the
 Unix socket via Tauri commands (`src-tauri/src/lib.rs` → `wirefinder-proto`), shows
