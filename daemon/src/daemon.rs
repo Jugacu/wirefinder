@@ -656,7 +656,10 @@ mod tests {
     #[test]
     fn an_inactive_server_lists_no_state() {
         let (_dir, mut d) = onboarded(); // "nexus", never switched to
-        let nexus = servers(&mut d).into_iter().find(|s| s.name == "nexus").unwrap();
+        let nexus = servers(&mut d)
+            .into_iter()
+            .find(|s| s.name == "nexus")
+            .unwrap();
         assert!(!nexus.active);
         assert_eq!(nexus.state, None);
     }
