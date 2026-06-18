@@ -1,13 +1,15 @@
 # Build wirefinder on GitHub's machines.
 #
 # On every push and pull request, GitHub builds the WHOLE product from a clean
-# checkout, in two jobs that run in parallel:
+# checkout, in jobs that run in parallel:
 #
-#   build      — the privileged core: the `wirefinderd` daemon + `wirefinder`
+#   core       — the privileged core: the `wirefinderd` daemon + `wirefinder`
 #                CLI (the proto+daemon+cli Cargo workspace at the repo root).
-#                Uploads the two binaries as a downloadable artifact.
+#                ONE debug compile feeds fmt, clippy, tests, AND the uploaded
+#                binaries — so the workspace is compiled once per run, not twice.
 #   build-ui   — the unprivileged desktop app: the Tauri (React + tray) GUI in
-#                ui/. Compiles it to PROVE it builds; does not ship it yet.
+#                ui/. Compiles it (debug) to PROVE it builds; does not ship it
+#                yet. Release-mode UI is verified by release.yml on tags.
 #
 # These are the two halves of wirefinder's architecture (privileged daemon +
 # unprivileged UI), and they install differently, so they build as separate
@@ -17,6 +19,7 @@
 # Pinned to current major versions (verified 2026-06-14):
 #   actions/checkout@v6      actions/upload-artifact@v7   dtolnay/rust-toolchain
 #   Swatinem/rust-cache@v2   actions/setup-node@v6        pnpm/action-setup@v6
+#   awalsh128/cache-apt-pkgs-action@v1
 
 name: build
 
@@ -33,7 +36,12 @@ on:
   pull_request:
 
 jobs:
-  build:
+  # The privileged core (daemon + cli + proto), the root Cargo workspace. ONE
+  # debug compile serves every check: fmt and clippy and tests and the uploaded
+  # binaries all share the same target/, so the workspace is compiled once per
+  # run instead of once for "build it" and again for "test it". Steps are ordered
+  # cheapest-first so a formatting or lint slip fails in seconds.
+  core:
     # The runner: a throwaway VM GitHub gives you, fresh every run.
     runs-on: ubuntu-latest
 
@@ -42,9 +50,12 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
-      # 2. Install a Rust toolchain (rustc + cargo). The runner has no Rust by default.
+      # 2. Install a Rust toolchain (rustc + cargo) WITH clippy + rustfmt — neither
+      #    is installed by default, and the quality steps below need both.
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
 
       # 3. Cache ~/.cargo and target/ keyed on Cargo.lock + rustc version, so the
       #    second run doesn't recompile every dependency from scratch.
@@ -52,22 +63,33 @@ jobs:
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
 
-      # 4. The actual build. The workspace manifest (Cargo.toml) is at the repo
-      #    root, so cargo finds it with no extra flags.
-      - name: Build release binaries
-        run: cargo build --release
+      # 4. Quality gates, cheapest-first. fmt is a pure text check (no compile);
+      #    clippy then compiles the workspace (debug) and fails on any warning;
+      #    tests reuse clippy's artifacts to run the proto round-trip + the rest.
+      - name: Format check
+        run: cargo fmt --all --check                       # style: fail on any diff from rustfmt
+      - name: Clippy
+        run: cargo clippy --all-targets --workspace -- -D warnings   # idiom/correctness: warnings = failure
+      - name: Tests
+        run: cargo test --workspace                        # behaviour: the proto contract round-trip + more
 
-      # 5. Hand the binaries back. `path` lists files (it ignores any step
-      #    working-directory — it's relative to the repo root). `if-no-files-found:
-      #    error` means a silently-renamed binary FAILS the run instead of
-      #    uploading nothing — honest CI.
+      # 5. The artifact. A plain `cargo build` (debug) reuses the objects clippy
+      #    and the tests already compiled, so this adds the final link, not a
+      #    second from-scratch compile. It's a throwaway per-run PR artifact, so
+      #    debug is fine — release.yml ships the optimized binaries.
+      - name: Build binaries
+        run: cargo build
+
+      # `path` lists files (it ignores any step working-directory — it's relative
+      # to the repo root). `if-no-files-found: error` means a silently-renamed
+      # binary FAILS the run instead of uploading nothing — honest CI.
       - name: Upload binaries
         uses: actions/upload-artifact@v7
         with:
           name: wirefinder-linux-x86_64
           path: |
-            target/release/wirefinder
-            target/release/wirefinderd
+            target/debug/wirefinder
+            target/debug/wirefinderd
           if-no-files-found: error
 
   # The desktop GUI. Runs in parallel with `build`. This job only proves the
@@ -84,14 +106,17 @@ jobs:
       # Tauri's Linux build dependencies (Ubuntu 24.04 → webkit2gtk 4.1). Needed
       # to compile and link the webview and the appindicator tray. patchelf is
       # only used by bundling, but it's cheap and keeps the env build-complete.
+      # The cache action installs these AND caches the downloaded .debs, so later
+      # runs restore them instead of re-fetching from the apt mirrors each time.
       - name: Install Tauri system deps
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            libwebkit2gtk-4.1-dev \
-            libayatana-appindicator3-dev \
-            librsvg2-dev \
+        uses: awalsh128/cache-apt-pkgs-action@v1
+        with:
+          packages: >-
+            libwebkit2gtk-4.1-dev
+            libayatana-appindicator3-dev
+            librsvg2-dev
             build-essential file libssl-dev libxdo-dev patchelf
+          version: 1.0
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -121,16 +146,19 @@ jobs:
         working-directory: ui
         run: pnpm install --frozen-lockfile
 
-      # Build the whole app to prove it compiles. --no-bundle skips the
-      # .deb/AppImage installer generation (deferred to the packaging lesson).
-      # tauri.conf.json's beforeBuildCommand (`pnpm build` = tsc && vite build)
-      # type-checks and bundles the frontend before the Rust compile.
-      - name: Build Tauri app (no bundle)
+      # Build the whole app to prove it compiles. --debug uses the dev profile
+      # (no release optimization) — this is only a compile gate, the binary is
+      # never shipped from here, so we skip the slow optimized build; release.yml
+      # verifies the release profile on tags. --no-bundle skips the .deb/AppImage
+      # installer generation (deferred to the packaging lesson). tauri.conf.json's
+      # beforeBuildCommand (`pnpm build` = tsc && vite build) still type-checks and
+      # bundles the frontend before the Rust compile regardless of profile.
+      - name: Build Tauri app (debug, no bundle)
         working-directory: ui
-        run: pnpm tauri build --no-bundle
+        run: pnpm tauri build --debug --no-bundle
 
   # Quality gate for the frontend: is the TypeScript/React/CSS correct and clean,
-  # not just compilable? The UI mirror of the Rust `quality` job below. It's cheap
+  # not just compilable? The UI mirror of the Rust checks in the `core` job. It's cheap
   # (no webkit, no Rust), so it runs as its own fast job and fails in seconds —
   # giving lint/format/type feedback long before build-ui's full Tauri compile
   # finishes. Biome (lint + format, one binary) and tsc are dev deps in ui/.
@@ -184,24 +212,3 @@ jobs:
         uses: EmbarkStudios/cargo-deny-action@v2
         with:
           manifest-path: Cargo.toml
-
-  # Quality gate: is the code correct and clean, not just compilable? Three
-  # checks, each failing CI on its own: formatting, clippy lints, and tests.
-  # Runs in the root workspace (the daemon+cli+proto, no webkit needed).
-  quality:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-      - name: Install Rust (with clippy + rustfmt)
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy, rustfmt    # NOT installed by default — must be requested
-      - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
-      - name: Format check
-        run: cargo fmt --all --check                       # style: fail on any diff from rustfmt
-      - name: Clippy
-        run: cargo clippy --all-targets --workspace -- -D warnings   # idiom/correctness: warnings = failure
-      - name: Tests
-        run: cargo test --workspace                        # behaviour: the proto contract round-trip + more
