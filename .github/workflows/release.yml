@@ -9,7 +9,9 @@
 # wirefinder_<version>_amd64.deb (daemon + cli + gui + systemd unit + launcher).
 # The raw binaries are attached too, for non-Debian users.
 #
-# Pinned/verified 2026-06-14.
+# Pinned/verified 2026-06-14. Added: taiki-e/install-action@v2 (prebuilt cargo-deb,
+# so it isn't compiled from source each release) and awalsh128/cache-apt-pkgs-action@v1
+# (caches the webkit/GTK .debs).
 
 name: release
 
@@ -31,17 +33,28 @@ jobs:
         uses: actions/checkout@v6
 
       # The GUI links webkit/GTK at build time (same deps as build.yml's build-ui).
+      # The cache action installs them AND caches the downloaded .debs for reuse.
       - name: Install Tauri system deps
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            libwebkit2gtk-4.1-dev \
-            libayatana-appindicator3-dev \
-            librsvg2-dev \
+        uses: awalsh128/cache-apt-pkgs-action@v1
+        with:
+          packages: >-
+            libwebkit2gtk-4.1-dev
+            libayatana-appindicator3-dev
+            librsvg2-dev
             build-essential file libssl-dev libxdo-dev patchelf
+          version: 1.0
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
+
+      # Prebuilt cargo-deb (downloaded binary, not compiled from source). package.sh
+      # guards with `command -v cargo-deb || cargo install …`, so having it on PATH
+      # here short-circuits that guard — saving the multi-minute source build each
+      # release. The local `cargo install` fallback in package.sh is untouched.
+      - name: Install cargo-deb
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deb
 
       # Two separate Cargo workspaces → two cache entries.
       - name: Cache cargo
