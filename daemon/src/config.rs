@@ -102,6 +102,9 @@ impl ServerConfig {
             addresses: self.addresses.clone(),
             public_key: keys::public_key(&self.private_key)?,
             active,
+            // The active tunnel's live state is filled in by `Daemon::list_servers`,
+            // which has the live interface in hand; a bare `info()` reports none.
+            state: None,
         })
     }
 

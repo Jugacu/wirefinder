@@ -39,6 +39,13 @@ function summarize(status: InterfaceStatus | null): Summary {
   return summary;
 }
 
+/** Label for a server's switch button, given the in-flight `busy` task (if any). */
+function switchButtonLabel(s: ServerInfo, busy: string | null): string {
+  if (busy === s.name) return "Switching…";
+  if (!s.active) return "Connect";
+  return s.state === "Connecting" ? "Connecting…" : "Connected";
+}
+
 interface Props {
   /** Called when removing the last server, to return to onboarding. */
   onServersEmptied: () => void;
@@ -144,6 +151,7 @@ export function Dashboard({ onServersEmptied, onOffline }: Props) {
 
   return (
     <main className={styles.dashboard}>
+      <div className={cx(styles.ambient, styles[`ambient${summary}`])} aria-hidden />
       <header className={styles.topbar}>
         <h1>Wirefinder</h1>
         <span className={styles.topbarRight}>
@@ -255,7 +263,7 @@ export function Dashboard({ onServersEmptied, onOffline }: Props) {
                     disabled={s.active || busy !== null}
                     onClick={() => act(s.name, () => switchServer(s.name))}
                   >
-                    {busy === s.name ? "Switching…" : s.active ? "Connected" : "Connect"}
+                    {switchButtonLabel(s, busy)}
                   </button>
                   <Menu
                     label={`Actions for ${s.name}`}

@@ -134,6 +134,56 @@
   }
 }
 
+/* ── Ambient background glow ──────────────────────────────────────────────────
+   A peripheral echo of the hero dot: the same teal/gold state vocabulary, but
+   diffused into a soft radial glow anchored top-right (matching the body
+   gradient's glow position). Fixed + z-index: -1 keeps it behind every card and
+   anchored to the viewport, so a tall page (open Add/Edit form) never shifts it.
+   pointer-events: none so it never eats a click. */
+.ambient {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  opacity: 0;
+  /* Fade in/out as state changes. While an active state's breathe animation
+     runs it drives opacity itself; on return to an idle state the animation is
+     gone and opacity eases back to 0 through this transition. */
+  transition: opacity 0.6s ease;
+}
+
+.ambient-Connecting {
+  background: radial-gradient(60% 50% at 85% 15%, rgba(224, 168, 58, 0.22), transparent 70%);
+  animation: breathe 3s ease-in-out infinite;
+}
+
+.ambient-Alive {
+  /* Steady, static teal — "connected" reads as a settled, present state. Only
+     Connecting breathes; once the tunnel is up the glow holds still. */
+  background: radial-gradient(60% 50% at 85% 15%, rgba(54, 198, 230, 0.18), transparent 70%);
+  opacity: 1;
+}
+
+.ambient-Stale {
+  /* Connected but the handshake has aged — a quiet, static gold, mirroring how
+     the hero treats Stale. No breath; it isn't actively doing anything. */
+  background: radial-gradient(60% 50% at 85% 15%, rgba(224, 168, 58, 0.1), transparent 70%);
+  opacity: 1;
+}
+
+/* Never / Disconnected / Offline have no rule → the base opacity: 0 keeps the
+   background plain. */
+
+@keyframes breathe {
+  0%,
+  100% {
+    opacity: 0.35;
+  }
+  50% {
+    opacity: 0.7;
+  }
+}
+
 /* ── Servers ──────────────────────────────────────────────────────────────── */
 
 .section-head {
@@ -263,5 +313,11 @@
   }
   .servers li {
     transition: none;
+  }
+  /* Drop the breath but keep the glow, so state stays legible — same trade the
+     hero dot makes above. (Alive is already static, so it needs no override.) */
+  .ambient-Connecting {
+    animation: none;
+    opacity: 0.4;
   }
 }

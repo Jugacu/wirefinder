@@ -26,7 +26,10 @@ export interface ServerInfo {
   endpoint: string;
   addresses: string[];
   public_key: string; // OURS, derived — safe to show/copy
-  active: boolean;
+  active: boolean; // the SELECTED tunnel (identity loaded on the interface)
+  // The active tunnel's live connection state, derived daemon-side like a peer's
+  // `state`, so the server block renders consistently with the hero. null = inactive.
+  state: ConnState | null;
 }
 
 /** The editable view of a stored tunnel: every field in `ServerSpec` except the

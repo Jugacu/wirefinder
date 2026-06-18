@@ -223,18 +223,26 @@ impl<W: Wireguard> Daemon<W> {
     }
 
     /// OUR public key currently on the live interface, or `None` if the interface is
-    /// down/unreadable. This uniquely identifies the active tunnel.
+    /// down/unreadable. This uniquely identifies the active tunnel. Note `list_servers`
+    /// deliberately inlines this same logic so it can share a single status snapshot
+    /// across the `active` flag and the derived `state`, rather than reading twice.
     fn active_public_key(&self) -> Option<String> {
         self.wg.status().ok().and_then(|live| live.public_key)
     }
 
-    /// The configured servers, each flagged with whether it is the active tunnel.
-    /// A tunnel is active when OUR public key currently on the interface matches its
-    /// own derived public key — which is unique per tunnel, so two tunnels that
-    /// share a peer (server) public key are still told apart. Best-effort: if the
-    /// interface is down/unreadable, nothing is active.
+    /// The configured servers, each flagged with whether it is the active tunnel and,
+    /// for the active one, its live connection state. A tunnel is active when OUR
+    /// public key currently on the interface matches its own derived public key —
+    /// which is unique per tunnel, so two tunnels that share a peer (server) public
+    /// key are still told apart. The active tunnel's `state` is derived from the same
+    /// live snapshot, using the same rule as [`read_status`](Self::read_status), so a
+    /// client renders the two consistently. Best-effort: if the interface is
+    /// down/unreadable, nothing is active.
     fn list_servers(&self) -> Vec<ServerInfo> {
-        let active_key = self.active_public_key();
+        // Read the interface once so `active` and `state` come from one snapshot.
+        let live = self.wg.status().ok();
+        let active_key = live.as_ref().and_then(|l| l.public_key.clone());
+        let connecting = self.is_connecting();
 
         self.cfg
             .servers
@@ -242,6 +250,15 @@ impl<W: Wireguard> Daemon<W> {
             .filter_map(|s| {
                 let mut info = s.info(false).ok()?;
                 info.active = active_key.as_deref() == Some(info.public_key.as_str());
+                if info.active {
+                    // The active tunnel's sole peer is its server; derive its state
+                    // exactly as `read_status` does (handshake age + connecting window).
+                    let age = live
+                        .as_ref()
+                        .and_then(|l| l.peers.iter().find(|p| p.public_key == s.public_key))
+                        .and_then(handshake_age);
+                    info.state = Some(derive_state(age, connecting));
+                }
                 Some(info)
             })
             .collect()
@@ -606,19 +623,42 @@ mod tests {
         assert_eq!(name, "nexus");
         assert!(d.wg.calls().contains(&"switch:nexus".to_string()));
 
-        assert!(
-            servers(&mut d)
-                .iter()
-                .find(|s| s.name == "nexus")
-                .unwrap()
-                .active
-        );
+        let listed = servers(&mut d);
+        let nexus = listed.iter().find(|s| s.name == "nexus").unwrap();
+        assert!(nexus.active);
+        // The server list and the status view derive the SAME state: with no handshake
+        // yet, inside the window, the active server reads as Connecting in both places.
+        assert_eq!(nexus.state, Some(ConnState::Connecting));
 
-        // With no handshake yet, inside the window, it reads as Connecting.
         let Response::Status(status) = d.handle(Request::Status) else {
             panic!("expected Status");
         };
         assert_eq!(status.peers[0].state, ConnState::Connecting);
+    }
+
+    #[test]
+    fn the_active_server_lists_alive_once_a_handshake_lands() {
+        let (_dir, mut d) = onboarded();
+        d.handle(Request::SwitchServer {
+            name: "nexus".into(),
+        });
+        d.wg.set_live(vec![FakePeer {
+            public_key: PEER_KEY.into(),
+            last_handshake: Some(SystemTime::now()),
+        }]);
+        // The list-derived state agrees with the status-derived state: both Alive.
+        let listed = servers(&mut d);
+        let nexus = listed.iter().find(|s| s.name == "nexus").unwrap();
+        assert!(nexus.active);
+        assert_eq!(nexus.state, Some(ConnState::Alive));
+    }
+
+    #[test]
+    fn an_inactive_server_lists_no_state() {
+        let (_dir, mut d) = onboarded(); // "nexus", never switched to
+        let nexus = servers(&mut d).into_iter().find(|s| s.name == "nexus").unwrap();
+        assert!(!nexus.active);
+        assert_eq!(nexus.state, None);
     }
 
     #[test]

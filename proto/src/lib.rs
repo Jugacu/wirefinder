@@ -169,7 +169,14 @@ pub struct ServerInfo {
     pub addresses: Vec<String>,
     /// Our public key for this tunnel (safe to expose).
     pub public_key: String,
+    /// Whether this is the SELECTED tunnel: its identity is currently loaded on the
+    /// live interface. This says nothing about handshake health — see `state`.
     pub active: bool,
+    /// The active tunnel's live connection state, derived the same way as a peer's
+    /// `state` in [`InterfaceStatus`] (so a client renders it consistently with the
+    /// status view). `None` for inactive tunnels, which have no live connection.
+    #[serde(default)]
+    pub state: Option<ConnState>,
 }
 
 /// The editable view of a configured server, used to pre-fill an edit form. Like
@@ -387,6 +394,7 @@ mod tests {
                 addresses: vec!["10.0.0.2/24".into()],
                 public_key: "pubkey".into(),
                 active: true,
+                state: Some(ConnState::Alive),
             }]),
             Response::Switched {
                 name: "nexus".into(),
