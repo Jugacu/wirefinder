@@ -47,7 +47,7 @@ export function ServerForm({ onSubmit, onCancel, submitLabel = "Add server", ini
     initial ? initial.addresses.join(", ") : "10.0.0.2/24",
   );
   const [allowedIps, setAllowedIps] = useState(
-    initial ? initial.allowed_ips.join(", ") : "0.0.0.0/0",
+    initial ? initial.allowed_ips.join(", ") : "0.0.0.0/0, ::/0",
   );
   const [keyMode, setKeyMode] = useState<"generate" | "import" | "keep">(
     editing ? "keep" : "generate",
@@ -160,10 +160,13 @@ export function ServerForm({ onSubmit, onCancel, submitLabel = "Add server", ini
         <input
           value={allowedIps}
           onChange={(e) => setAllowedIps(e.target.value)}
-          placeholder="0.0.0.0/0"
+          placeholder="0.0.0.0/0, ::/0"
           spellCheck={false}
         />
-        <small>Comma-separated. 0.0.0.0/0 routes all traffic through the tunnel.</small>
+        <small>
+          Comma-separated. <code>0.0.0.0/0, ::/0</code> routes all traffic through the tunnel.
+          Listing only <code>0.0.0.0/0</code> leaves IPv6 outside the tunnel.
+        </small>
       </label>
 
       <div className={forms.field}>

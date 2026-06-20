@@ -109,10 +109,12 @@ fn parse_request(args: &[String]) -> Option<Request> {
         [cmd, name] if cmd == "remove" => Some(Request::RemoveServer { name: name.clone() }),
         [cmd, name] if cmd == "get" => Some(Request::GetServer { name: name.clone() }),
         [cmd, name, public_key, endpoint, address, rest @ ..] if cmd == "add" => {
-            // allowed_ips: optional comma-separated trailing arg; default to a full tunnel.
+            // allowed_ips: optional comma-separated trailing arg; default to a full,
+            // dual-stack tunnel so IPv6 doesn't leak outside the tunnel on a
+            // dual-stack host. Listing only one family is respected as intent.
             let allowed_ips = match rest {
                 [csv] => csv.split(',').map(|s| s.trim().to_string()).collect(),
-                _ => vec!["0.0.0.0/0".to_string()],
+                _ => vec!["0.0.0.0/0".to_string(), "::/0".to_string()],
             };
             Some(Request::AddServer {
                 server: ServerSpec {
@@ -245,7 +247,8 @@ mod tests {
         };
         assert_eq!(server.private_key, None, "the daemon generates the key");
         assert_eq!(server.addresses, vec!["10.0.0.2/24"]);
-        assert_eq!(server.allowed_ips, vec!["0.0.0.0/0"]);
+        // Default is a full, dual-stack tunnel so IPv6 doesn't leak.
+        assert_eq!(server.allowed_ips, vec!["0.0.0.0/0", "::/0"]);
 
         let Request::AddServer { server } = parse_request(&argv(&[
             "add",

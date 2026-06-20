@@ -1,18 +1,66 @@
-# Git hooks for the wirefinder repo. The repo root holds the Rust workspace; the
-# desktop UI lives in ui/ (its own pnpm package). Git keeps a single hooks dir at the
-# repo root, so the hook config lives here even though today it only drives the UI.
+# Git hooks for the wirefinder repo. The repo root holds the Rust workspace
+# (proto + daemon + cli); the desktop UI lives in ui/ (its own pnpm package and a
+# SEPARATE Cargo workspace under ui/src-tauri). Git keeps a single hooks dir at the
+# repo root, so all hook config lives here.
 #
-# The UI hook is installed via ui/package.json's `prepare` script (`lefthook install`),
+# The hook is installed via ui/package.json's `prepare` script (`lefthook install`),
 # which runs automatically after `pnpm install` in ui/.
+#
+# These pre-commit commands mirror, one-for-one, the jobs in .github/workflows/build.yml
+# so that a clean commit means a green pipeline:
+#
+#   build.yml `core`     → cargo-fmt + cargo-clippy + cargo-test  (cargo build is just the
+#                          artifact upload; clippy + test already compile the workspace)
+#   build.yml `deny`     → cargo-deny
+#   build.yml `lint-ui`  → biome-ui + ui-typecheck
+#   build.yml `build-ui` → (CI only — a full Tauri compile is too heavy for a pre-commit)
+#
+# Each command is gated by `glob` so it only fires when files it cares about are staged.
+# The cargo-* commands run over the WHOLE root workspace, not just {staged_files}: fmt
+# --check, clippy, and test operate per-crate, and a partial file list would skip
+# cross-file lints. Their globs are scoped to the root workspace crates + manifests so a
+# UI-only change doesn't drag in the daemon/cli checks (the UI's own Rust lives in
+# ui/src-tauri and is covered by ui-build instead).
 pre-commit:
   parallel: true
   commands:
-    # On commit, Biome lints + formats only the STAGED files under ui/ (root: "ui/"
-    # filters to that subtree and runs the command from there). It auto-fixes what it
-    # can and re-stages the fixes; anything it can't fix (a real lint error) aborts the
-    # commit. The Rust side is gated in CI (cargo fmt/clippy) rather than here.
+    # --- UI (ui/, build.yml `lint-ui`) ---------------------------------------------
+
+    # Biome lints + format-checks the STAGED files under ui/ (root: "ui/" filters to
+    # that subtree and runs from there). CI runs `biome ci .` read-only; locally we
+    # --write so it auto-fixes and re-stages, and only a real (unfixable) lint error
+    # aborts the commit.
     biome-ui:
       root: "ui/"
       glob: "*.{js,jsx,ts,tsx,json,jsonc,css}"
       run: pnpm biome check --write --no-errors-on-unmatched --files-ignore-unknown=true {staged_files}
       stage_fixed: true
+
+    # tsc --noEmit over the whole UI tsconfig (types are cross-file, so it can't be
+    # scoped to {staged_files}). Mirrors `pnpm typecheck` in CI. The full Tauri compile
+    # (build.yml `build-ui`) is left to CI — too heavy for a pre-commit.
+    ui-typecheck:
+      root: "ui/"
+      glob: "*.{ts,tsx}"
+      run: pnpm typecheck
+
+    # --- Root Cargo workspace (proto + daemon + cli, build.yml `core`) --------------
+
+    cargo-fmt:
+      glob: ["proto/**/*.rs", "daemon/**/*.rs", "cli/**/*.rs", "Cargo.toml", "Cargo.lock", "proto/Cargo.toml", "daemon/Cargo.toml", "cli/Cargo.toml"]
+      run: cargo fmt --all --check
+    cargo-clippy:
+      glob: ["proto/**/*.rs", "daemon/**/*.rs", "cli/**/*.rs", "Cargo.toml", "Cargo.lock", "proto/Cargo.toml", "daemon/Cargo.toml", "cli/Cargo.toml"]
+      run: cargo clippy --all-targets --workspace -- -D warnings
+    cargo-test:
+      glob: ["proto/**/*.rs", "daemon/**/*.rs", "cli/**/*.rs", "Cargo.toml", "Cargo.lock", "proto/Cargo.toml", "daemon/Cargo.toml", "cli/Cargo.toml"]
+      run: cargo test --workspace
+
+    # --- Supply chain (build.yml `deny`) -------------------------------------------
+
+    # cargo-deny reads deny.toml: advisories, license allow-list, banned/duplicate
+    # crates, crate sources. Only the dependency graph matters, so it fires on manifest,
+    # lockfile, or policy changes. Mirrors the cargo-deny-action default (`check`).
+    cargo-deny:
+      glob: ["Cargo.toml", "Cargo.lock", "proto/Cargo.toml", "daemon/Cargo.toml", "cli/Cargo.toml", "deny.toml"]
+      run: cargo deny check
