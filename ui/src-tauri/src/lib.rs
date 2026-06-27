@@ -60,8 +60,8 @@ fn remove_server(name: String) -> Result<Vec<ServerInfo>, String> {
 }
 
 #[tauri::command]
-fn list_servers() -> Result<Vec<ServerInfo>, String> {
-    match request(&Request::ListServers)? {
+fn list_servers(query: Option<String>) -> Result<Vec<ServerInfo>, String> {
+    match request(&Request::ListServers { query })? {
         Response::Servers(s) => Ok(s),
         Response::Error(e) => Err(e),
         _ => Err(unexpected()),

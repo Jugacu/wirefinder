@@ -46,9 +46,14 @@ fn print_peer(p: &PeerStatus) {
     println!();
 }
 
-fn print_servers(servers: &[ServerInfo]) {
+fn print_servers(servers: &[ServerInfo], filter: Option<&str>) {
     if servers.is_empty() {
-        println!("no servers configured — add one with `wirefinder add …` or `import`");
+        match filter {
+            // An active filter that matched nothing is a different story from an
+            // un-onboarded daemon — don't tell the user to add a server.
+            Some(q) => println!("no servers match {q:?}"),
+            None => println!("no servers configured — add one with `wirefinder add …` or `import`"),
+        }
         return;
     }
     println!("servers:");
@@ -91,7 +96,9 @@ fn print_usage() {
     println!("                                                  add a server (generates a key)");
     println!("  wirefinder import <file.conf> [name]            import a wg-quick config");
     println!("  wirefinder remove <name>                        forget a server");
-    println!("  wirefinder servers                              list servers");
+    println!(
+        "  wirefinder servers [query]                      list servers (optionally filtered)"
+    );
     println!("  wirefinder get <name>                           show a server's editable detail");
     println!("  wirefinder switch <name>                        connect to a server");
     println!("  wirefinder disconnect                           tear the tunnel down");
@@ -103,7 +110,10 @@ fn print_usage() {
 fn parse_request(args: &[String]) -> Option<Request> {
     match args {
         [cmd] if cmd == "info" => Some(Request::Status),
-        [cmd] if cmd == "servers" => Some(Request::ListServers),
+        [cmd] if cmd == "servers" => Some(Request::ListServers { query: None }),
+        [cmd, query] if cmd == "servers" => Some(Request::ListServers {
+            query: Some(query.clone()),
+        }),
         [cmd] if cmd == "disconnect" => Some(Request::Disconnect),
         [cmd, name] if cmd == "switch" => Some(Request::SwitchServer { name: name.clone() }),
         [cmd, name] if cmd == "remove" => Some(Request::RemoveServer { name: name.clone() }),
@@ -152,7 +162,7 @@ fn file_stem(path: &str) -> String {
         .to_string()
 }
 
-fn render(response: Response) {
+fn render(response: Response, filter: Option<&str>) {
     match response {
         Response::Status(s) => {
             println!("interface {}  port {}\n", s.name, s.listen_port);
@@ -160,7 +170,7 @@ fn render(response: Response) {
                 print_peer(peer);
             }
         }
-        Response::Servers(servers) => print_servers(&servers),
+        Response::Servers(servers) => print_servers(&servers, filter),
         Response::ServerDetail(d) => print_detail(&d),
         Response::Switched { name } => println!("switched to {name}"),
         Response::Disconnected => println!("disconnected — interface is down"),
@@ -193,7 +203,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     };
 
-    render(request(&req)?);
+    // The list filter (if any) shapes the "empty" message, so carry it into render.
+    let filter = match &req {
+        Request::ListServers { query } => query.clone(),
+        _ => None,
+    };
+    render(request(&req)?, filter.as_deref());
     Ok(())
 }
 
@@ -210,7 +225,13 @@ mod tests {
         assert_eq!(parse_request(&argv(&["info"])), Some(Request::Status));
         assert_eq!(
             parse_request(&argv(&["servers"])),
-            Some(Request::ListServers)
+            Some(Request::ListServers { query: None })
+        );
+        assert_eq!(
+            parse_request(&argv(&["servers", "nyc"])),
+            Some(Request::ListServers {
+                query: Some("nyc".into())
+            })
         );
         assert_eq!(
             parse_request(&argv(&["disconnect"])),

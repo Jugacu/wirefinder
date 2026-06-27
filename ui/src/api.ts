@@ -83,7 +83,11 @@ export const importServer = (name: string, conf: string) =>
 export const removeServer = (name: string) => invoke<ServerInfo[]>("remove_server", { name });
 
 // --- status / control ---
-export const listServers = () => invoke<ServerInfo[]>("list_servers");
+/** List servers, optionally filtered daemon-side by a free-text `query` (matched
+ *  against name, endpoint, and addresses). The daemon owns the filter so the CLI
+ *  and GUI behave identically; omit `query` for the full list. */
+export const listServers = (query?: string) =>
+  invoke<ServerInfo[]>("list_servers", { query: query ?? null });
 // null when the daemon is reachable but the tunnel is down (disconnected).
 export const getStatus = () => invoke<InterfaceStatus | null>("status");
 export const switchServer = (name: string) => invoke<string>("switch_server", { name });

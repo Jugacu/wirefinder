@@ -299,7 +299,16 @@ impl<W: Wireguard> Daemon<W> {
                 Err(_) => Response::Disconnected,
             },
 
-            Request::ListServers => Response::Servers(self.list_servers()),
+            Request::ListServers { query } => {
+                // Filtering lives here (daemon-side) so the CLI and GUI share one
+                // implementation. `list_servers()` stays unfiltered — Add/Edit/Remove
+                // reuse it to return the full updated list.
+                let mut servers = self.list_servers();
+                if let Some(q) = query.as_deref() {
+                    servers.retain(|s| s.matches(q));
+                }
+                Response::Servers(servers)
+            }
 
             Request::GetServer { name } => match self.get_server(&name) {
                 Ok(detail) => Response::ServerDetail(detail),
@@ -487,7 +496,7 @@ mod tests {
     }
 
     fn servers(d: &mut Daemon<FakeWireguard>) -> Vec<ServerInfo> {
-        let Response::Servers(list) = d.handle(Request::ListServers) else {
+        let Response::Servers(list) = d.handle(Request::ListServers { query: None }) else {
             panic!("expected Servers");
         };
         list
@@ -497,6 +506,43 @@ mod tests {
     fn a_fresh_daemon_has_no_servers() {
         let (_dir, mut d) = fresh_daemon();
         assert!(servers(&mut d).is_empty());
+    }
+
+    #[test]
+    fn list_servers_filters_by_query_daemon_side() {
+        let (_dir, mut d) = fresh_daemon();
+        // Give the two fixtures distinct addresses so we can prove a query selects a
+        // subset by address (not just that address matching is wired up).
+        let mut nyc = server("mullvad-nyc");
+        nyc.addresses = vec!["10.10.0.2/32".into()];
+        let mut ch = server("proton-ch");
+        ch.addresses = vec!["10.20.0.2/32".into()];
+        d.handle(Request::AddServer { server: nyc });
+        d.handle(Request::AddServer { server: ch });
+
+        let list = |d: &mut Daemon<FakeWireguard>, q: Option<&str>| {
+            let Response::Servers(list) = d.handle(Request::ListServers {
+                query: q.map(String::from),
+            }) else {
+                panic!("expected Servers");
+            };
+            list
+        };
+
+        // No query → the full list.
+        assert_eq!(list(&mut d, None).len(), 2);
+        // A name substring → just the match, case-insensitively.
+        let by_name = list(&mut d, Some("NYC"));
+        assert_eq!(by_name.len(), 1);
+        assert_eq!(by_name[0].name, "mullvad-nyc");
+        // An address substring → just the server with that address.
+        let by_addr = list(&mut d, Some("10.20.0"));
+        assert_eq!(by_addr.len(), 1);
+        assert_eq!(by_addr[0].name, "proton-ch");
+        // The endpoint is searchable too (both fixtures share one) …
+        assert_eq!(list(&mut d, Some("198.51.100")).len(), 2);
+        // … and a miss yields an empty list, not an error.
+        assert!(list(&mut d, Some("tokyo")).is_empty());
     }
 
     #[test]
@@ -846,7 +892,7 @@ mod tests {
         });
 
         let requests = [
-            Request::ListServers,
+            Request::ListServers { query: None },
             Request::Status,
             Request::AddServer {
                 server: spec.clone(),

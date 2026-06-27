@@ -65,8 +65,13 @@ pub enum Request {
     /// Live tunnel status, or `Disconnected` if the interface is down.
     Status,
     /// The configured servers, each flagged with whether it is currently active.
-    /// An empty list means the daemon is reachable but un-onboarded.
-    ListServers,
+    /// An empty list means the daemon is reachable but un-onboarded. An optional
+    /// `query` filters the list daemon-side (see [`ServerInfo::matches`]) so the
+    /// CLI and GUI share one filtering implementation; `None` returns everything.
+    ListServers {
+        #[serde(default)]
+        query: Option<String>,
+    },
     /// Full editable detail for one server, to pre-fill an edit form. Carries every
     /// field a client may change EXCEPT secrets: the private key is never exposed,
     /// and a stored preshared key is reduced to a `has_preshared_key` flag. Errors
@@ -179,6 +184,22 @@ pub struct ServerInfo {
     pub state: Option<ConnState>,
 }
 
+impl ServerInfo {
+    /// Whether this server matches a free-text filter: a case-insensitive substring
+    /// match against its name, endpoint, or any of its addresses. An empty (or all
+    /// whitespace) query matches everything. This is the canonical filter both the
+    /// CLI and GUI get, applied daemon-side in response to [`Request::ListServers`].
+    pub fn matches(&self, query: &str) -> bool {
+        let q = query.trim().to_lowercase();
+        if q.is_empty() {
+            return true;
+        }
+        self.name.to_lowercase().contains(&q)
+            || self.endpoint.to_lowercase().contains(&q)
+            || self.addresses.iter().any(|a| a.to_lowercase().contains(&q))
+    }
+}
+
 /// The editable view of a configured server, used to pre-fill an edit form. Like
 /// [`ServerInfo`] it crosses the daemon → client boundary, so it carries NO secrets:
 /// the tunnel private key never appears, and a stored preshared key is reduced to a
@@ -278,10 +299,46 @@ mod tests {
                 },
                 r#"{"GetServer":{"name":"nexus"}}"#,
             ),
+            (
+                Request::ListServers { query: None },
+                r#"{"ListServers":{"query":null}}"#,
+            ),
+            (
+                Request::ListServers {
+                    query: Some("nyc".into()),
+                },
+                r#"{"ListServers":{"query":"nyc"}}"#,
+            ),
         ];
         for (req, expected) in cases {
             assert_eq!(serde_json::to_string(&req).unwrap(), expected);
         }
+    }
+
+    #[test]
+    fn server_info_matches_name_endpoint_and_address_case_insensitively() {
+        let info = ServerInfo {
+            name: "Mullvad NYC".into(),
+            endpoint: "nyc.mullvad.net:51820".into(),
+            addresses: vec!["10.64.0.2/32".into(), "fc00:bbbb::2/128".into()],
+            public_key: "pubkey".into(),
+            active: false,
+            state: None,
+        };
+        // Empty / whitespace query matches everything.
+        assert!(info.matches(""));
+        assert!(info.matches("   "));
+        // Case-insensitive substring across each searchable field.
+        assert!(info.matches("mullvad")); // name
+        assert!(info.matches("NYC")); // name, different case
+        assert!(info.matches(".net:518")); // endpoint
+        assert!(info.matches("10.64")); // an address
+        assert!(info.matches("fc00:BBBB")); // an address, different case
+                                            // Surrounding whitespace is ignored.
+        assert!(info.matches("  mullvad  "));
+        // A miss is a miss; the public key is intentionally NOT searched.
+        assert!(!info.matches("proton"));
+        assert!(!info.matches("pubkey"));
     }
 
     /// A minimal `ServerSpec` (only the required fields) deserializes, with the

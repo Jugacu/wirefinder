@@ -151,7 +151,7 @@ mod tests {
     #[test]
     fn a_valid_request_line_is_dispatched() {
         let (_dir, mut d) = daemon();
-        let resp = dispatch("\"ListServers\"\n", &mut d);
+        let resp = dispatch("{\"ListServers\":{}}\n", &mut d);
         assert!(matches!(resp, Response::Servers(_)));
     }
 

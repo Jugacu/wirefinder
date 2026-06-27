@@ -4,47 +4,24 @@ import {
   disconnect,
   editServer,
   getServer,
-  getStatus,
-  type InterfaceStatus,
-  listServers,
   removeServer,
   type ServerDetail,
   type ServerInfo,
-  setTraySummary,
   switchServer,
 } from "../api";
-import { humanizeAge, humanizeBytes, SUMMARY_LABEL, type Summary, trayTooltip } from "../format";
+import { SUMMARY_LABEL } from "../format";
 import { cx } from "../lib/cx";
 import styles from "./Dashboard.module.css";
+import { Hero } from "./Hero";
 import { ImportForm } from "./ImportForm";
-import { Menu } from "./Menu";
+import { CloseIcon, SearchIcon } from "./icons";
 import { ServerForm } from "./ServerForm";
+import { ServerListItem } from "./ServerListItem";
 import shared from "./shared.module.css";
+import { busyKey, useServerList } from "./useServerList";
+import { useServerSearch } from "./useServerSearch";
 
 type AddMode = null | "manual" | "import";
-
-const POLL_MS = 3000;
-/** Tolerate a couple of transient poll failures before declaring the daemon gone. */
-const OFFLINE_THRESHOLD = 3;
-
-/** Collapse the daemon's per-peer states into one headline state for the hero. */
-function summarize(status: InterfaceStatus | null): Summary {
-  if (status === null) return "Disconnected";
-  let summary: Summary = "Never";
-  for (const p of status.peers) {
-    if (p.state === "Alive") return "Alive";
-    if (p.state === "Connecting") summary = "Connecting";
-    else if (p.state === "Stale" && summary === "Never") summary = "Stale";
-  }
-  return summary;
-}
-
-/** Label for a server's switch button, given the in-flight `busy` task (if any). */
-function switchButtonLabel(s: ServerInfo, busy: string | null): string {
-  if (busy === s.name) return "Switching…";
-  if (!s.active) return "Connect";
-  return s.state === "Connecting" ? "Connecting…" : "Connected";
-}
 
 interface Props {
   /** Called when removing the last server, to return to onboarding. */
@@ -54,24 +31,27 @@ interface Props {
 }
 
 export function Dashboard({ onServersEmptied, onOffline }: Props) {
-  const [servers, setServers] = useState<ServerInfo[]>([]);
-  const [status, setStatus] = useState<InterfaceStatus | null>(null);
-  const [summary, setSummary] = useState<Summary>("Offline");
-  const [busy, setBusy] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [adding, setAdding] = useState<AddMode>(null);
-  // The server being edited (its secret-free detail), or null when no edit form is
-  // open. The form renders inside that server's own row; only one is ever open.
-  const [editing, setEditing] = useState<ServerDetail | null>(null);
+  const {
+    servers,
+    status,
+    summary,
+    busy,
+    error,
+    query,
+    setQuery,
+    applyServers,
+    isMounted,
+    refresh,
+    act,
+  } = useServerList(onOffline);
 
-  // Refs that the polling closure reads without needing to be re-created: whether
-  // we're still mounted, whether an action is in flight (so the poll backs off),
-  // and how many polls have failed in a row.
-  const mounted = useRef(true);
-  const busyRef = useRef(false);
-  const failures = useRef(0);
-  // The open edit form's wrapper, so we can scroll it into view when it opens.
+  // Which add flow is open (manual / import / none) and which server is being edited.
+  // Only one of {search, add/import form} is shown at a time; they dismiss each other.
+  const [adding, setAdding] = useState<AddMode>(null);
+  const [editing, setEditing] = useState<ServerDetail | null>(null);
   const editFormRef = useRef<HTMLDivElement | null>(null);
+
+  const search = useServerSearch(query, setQuery, () => setAdding(null));
 
   // When an edit form opens, bring its top into view — the edited row may be far
   // down the list. Keyed on the edited name so re-opening a different row re-scrolls.
@@ -80,63 +60,15 @@ export function Dashboard({ onServersEmptied, onOffline }: Props) {
     if (editing) editFormRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
   }, [editing?.name]);
 
-  async function refresh() {
-    try {
-      const [srv, st] = await Promise.all([listServers(), getStatus()]);
-      if (!mounted.current) return;
-      failures.current = 0;
-      setServers(srv);
-      setStatus(st);
-      const next = summarize(st);
-      setSummary(next);
-      setError(null);
-      // Keep the tray summary in step with each poll. Fire-and-forget;
-      // a failed tray update must never disrupt the dashboard.
-      setTraySummary(trayTooltip(next, st)).catch(() => {});
-    } catch (e) {
-      if (!mounted.current) return;
-      failures.current += 1;
-      setSummary("Offline");
-      setError(String(e));
-      setTraySummary(trayTooltip("Offline", null)).catch(() => {});
-      if (failures.current >= OFFLINE_THRESHOLD) onOffline();
-    }
-  }
-
-  // biome-ignore lint/correctness/useExhaustiveDependencies: the poll loop is set up once on mount; refresh reads the latest state through refs.
-  useEffect(() => {
-    mounted.current = true;
-    refresh();
-    const id = setInterval(() => {
-      // Don't let a background poll race (and clobber) an in-flight action.
-      if (!busyRef.current) refresh();
-    }, POLL_MS);
-    return () => {
-      mounted.current = false;
-      clearInterval(id);
-    };
-  }, []);
-
-  // Run an action, then re-read state. `key` drives per-row spinners. `skipRefresh`
-  // lets the caller hand off (e.g. removing the last server unmounts us).
-  async function act(key: string, fn: () => Promise<unknown>, skipRefresh = false) {
-    setBusy(key);
-    busyRef.current = true;
-    setError(null);
-    try {
-      await fn();
-      if (!skipRefresh && mounted.current) await refresh();
-    } catch (e) {
-      if (mounted.current) setError(String(e));
-    } finally {
-      busyRef.current = false;
-      if (mounted.current) setBusy(null);
-    }
+  /** Open an add/import flow, dismissing the edit form and the search field. */
+  function startAdding(mode: Exclude<AddMode, null>) {
+    setEditing(null);
+    search.close();
+    setAdding(mode);
   }
 
   // The public key is non-secret (you register it on your server); copy it straight to
   // the clipboard. The private key never leaves the daemon, so it's never offered here.
-  // Returns the label the menu flashes in place to confirm.
   async function copyKey(s: ServerInfo): Promise<string> {
     try {
       await navigator.clipboard.writeText(s.public_key);
@@ -146,8 +78,10 @@ export function Dashboard({ onServersEmptied, onOffline }: Props) {
     }
   }
 
-  const connected = summary !== "Offline" && summary !== "Disconnected";
-  const activePeer = status?.peers.find((p) => p.state === "Alive") ?? status?.peers[0] ?? null;
+  // `servers` is already the daemon-filtered result; this just drives the empty-state
+  // wording (no servers configured vs none matching the active query).
+  const filtering = query.trim() !== "";
+  const showSearch = servers.length > 0 || search.open;
 
   return (
     <main className={styles.dashboard}>
@@ -161,62 +95,64 @@ export function Dashboard({ onServersEmptied, onOffline }: Props) {
         </span>
       </header>
 
-      <section className={cx(styles.hero, styles[`hero${summary}`])}>
-        <div className={styles.heroRing} aria-hidden>
-          <span className={styles.heroDot} />
-        </div>
-        <div className={styles.heroText}>
-          <strong>{SUMMARY_LABEL[summary]}</strong>
-          {connected && activePeer && (
-            <span className="muted small">
-              ↓ {humanizeBytes(activePeer.rx_bytes)} · ↑ {humanizeBytes(activePeer.tx_bytes)} ·
-              handshake {humanizeAge(activePeer.handshake_age_secs)}
-            </span>
-          )}
-          {!connected && servers.length > 0 && (
-            <span className="muted small">Choose a server below to connect.</span>
-          )}
-        </div>
-        {connected && (
-          <button
-            type="button"
-            className={cx(shared.btn, shared.ghost)}
-            disabled={busy !== null}
-            onClick={() => act("__disconnect__", disconnect)}
-          >
-            {busy === "__disconnect__" ? "Disconnecting…" : "Disconnect"}
-          </button>
-        )}
-      </section>
+      <Hero
+        summary={summary}
+        status={status}
+        disabled={busy !== null}
+        disconnecting={busy === busyKey.disconnect}
+        onDisconnect={() => act(busyKey.disconnect, disconnect)}
+      />
 
       <section>
         <div className={styles.sectionHead}>
           <h2>Servers</h2>
-          {adding === null && (
+          <span className={styles.headActions}>
+            {showSearch && (
+              <button
+                type="button"
+                className={cx(styles.searchToggle, search.open && styles.searchToggleActive)}
+                aria-label={search.open ? "Close search" : "Search servers"}
+                aria-expanded={search.open}
+                onClick={search.toggle}
+              >
+                {search.open ? <CloseIcon /> : <SearchIcon />}
+              </button>
+            )}
             <span className={styles.addActions}>
               <button
                 type="button"
                 className={cx(shared.btn, shared.ghost, shared.small)}
-                onClick={() => {
-                  setEditing(null);
-                  setAdding("import");
-                }}
+                onClick={() => startAdding("import")}
               >
                 Import .conf
               </button>
               <button
                 type="button"
                 className={cx(shared.btn, shared.ghost, shared.small)}
-                onClick={() => {
-                  setEditing(null);
-                  setAdding("manual");
-                }}
+                onClick={() => startAdding("manual")}
               >
                 + Add
               </button>
             </span>
-          )}
+          </span>
         </div>
+
+        {showSearch && (
+          <div className={cx(styles.searchRow, search.open && styles.searchRowOpen)}>
+            <SearchIcon className={styles.searchIcon} />
+            <input
+              ref={search.inputRef}
+              type="search"
+              className={styles.searchInput}
+              placeholder="Filter servers…"
+              aria-label="Filter servers by name, endpoint, or address"
+              value={query}
+              tabIndex={search.open ? 0 : -1}
+              onChange={(e) => setQuery(e.target.value)}
+              onKeyDown={search.onFieldKeyDown}
+            />
+          </div>
+        )}
 
         {adding === "manual" && (
           <div className={cx(shared.card, shared.inset)}>
@@ -238,7 +174,7 @@ export function Dashboard({ onServersEmptied, onOffline }: Props) {
               onCancel={() => setAdding(null)}
               onImported={(left) => {
                 setAdding(null);
-                if (mounted.current) setServers(left);
+                applyServers(left);
               }}
             />
           </div>
@@ -246,96 +182,61 @@ export function Dashboard({ onServersEmptied, onOffline }: Props) {
 
         <ul className={styles.servers}>
           {servers.map((s) => (
-            <li key={s.name} className={s.active ? styles.active : undefined}>
-              <div className={styles.serverRow}>
-                <span className={styles.dot} aria-hidden>
-                  {s.active ? "●" : "○"}
-                </span>
-                <span className={styles.serverMeta}>
-                  <span className={styles.name}>{s.name}</span>
-                  <span className={styles.endpoint}>{s.endpoint}</span>
-                  <span className={styles.endpoint}>{s.addresses.join(", ")}</span>
-                </span>
-                <span className={styles.rowActions}>
-                  <button
-                    type="button"
-                    className={cx(shared.btn, shared.primary, shared.small)}
-                    disabled={s.active || busy !== null}
-                    onClick={() => act(s.name, () => switchServer(s.name))}
-                  >
-                    {switchButtonLabel(s, busy)}
-                  </button>
-                  <Menu
-                    label={`Actions for ${s.name}`}
-                    items={[
-                      {
-                        // Editing the active tunnel is disallowed (daemon rejects it
-                        // too); mirror Remove's disabled rule.
-                        label: busy === `edit:${s.name}` ? "Opening…" : "Edit",
-                        disabled: busy !== null || s.active,
-                        onClick: () =>
-                          act(
-                            `edit:${s.name}`,
-                            async () => {
-                              const detail = await getServer(s.name);
-                              if (!mounted.current) return;
-                              setAdding(null); // only one form open at a time
-                              setEditing(detail);
-                            },
-                            true, // we only opened a form; no list refresh
-                          ),
-                      },
-                      { label: "Copy public key", onClick: () => copyKey(s) },
-                      {
-                        label: "Remove",
-                        danger: true,
-                        disabled: busy !== null || s.active,
-                        onClick: () =>
-                          act(
-                            `rm:${s.name}`,
-                            async () => {
-                              // removeServer returns the fresh list; apply it directly so
-                              // we never refetch (and never race the parent's unmount when
-                              // the last server is gone).
-                              const left = await removeServer(s.name);
-                              if (left.length === 0) {
-                                onServersEmptied();
-                              } else if (mounted.current) {
-                                setServers(left);
-                              }
-                              // If we are editing this server we unset editing so it stays consistent
-                              if (editing?.name === s.name) {
-                                setEditing(null);
-                              }
-                            },
-                            true, // we've already updated state; skip the trailing refresh
-                          ),
-                      },
-                    ]}
-                  />
-                </span>
-              </div>
-
-              {editing?.name === s.name && (
-                <div className={styles.editForm} ref={editFormRef}>
-                  <ServerForm
-                    initial={editing}
-                    submitLabel="Save changes"
-                    onCancel={() => setEditing(null)}
-                    onSubmit={async (server) => {
-                      await editServer(server);
-                      setEditing(null);
-                      await refresh();
-                    }}
-                  />
-                </div>
-              )}
-            </li>
+            <ServerListItem
+              key={s.name}
+              server={s}
+              busy={busy}
+              editing={editing}
+              editFormRef={editFormRef}
+              onSwitch={() => act(busyKey.switch(s.name), () => switchServer(s.name))}
+              onEdit={() =>
+                act(
+                  busyKey.edit(s.name),
+                  async () => {
+                    const detail = await getServer(s.name);
+                    if (!isMounted()) return;
+                    setAdding(null); // only one form open at a time
+                    setEditing(detail);
+                  },
+                  true, // we only opened a form; no list refresh
+                )
+              }
+              onCopyKey={() => copyKey(s)}
+              onRemove={() =>
+                act(
+                  busyKey.remove(s.name),
+                  async () => {
+                    // removeServer returns the fresh list; apply it directly so we never
+                    // refetch (and never race the parent's unmount when the last is gone).
+                    const left = await removeServer(s.name);
+                    if (left.length === 0) {
+                      onServersEmptied();
+                    } else {
+                      applyServers(left);
+                    }
+                    if (editing?.name === s.name) setEditing(null);
+                  },
+                  true, // we've already updated state; skip the trailing refresh
+                )
+              }
+              onCancelEdit={() => setEditing(null)}
+              onSubmitEdit={async (server) => {
+                await editServer(server);
+                setEditing(null);
+                await refresh();
+              }}
+            />
           ))}
         </ul>
 
-        {servers.length === 0 && adding === null && (
+        {servers.length === 0 && !filtering && adding === null && (
           <p className={cx("muted", styles.empty)}>No servers yet. Add one to get connected.</p>
+        )}
+
+        {servers.length === 0 && filtering && (
+          <p className={cx("muted", styles.empty)} role="status">
+            No servers match “{query.trim()}”.
+          </p>
         )}
       </section>
 
