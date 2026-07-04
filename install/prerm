@@ -1,0 +1,20 @@
+#!/bin/sh
+# prerm — runs as root before the package's files are removed.
+#
+# The daemon deliberately leaves the tunnel (and its kill-switch ip rules) up when
+# it stops — stopping the control plane must not drop the user's VPN. But on FULL
+# REMOVAL nothing will be left to ever tear it down, so disconnect here, while the
+# daemon and CLI still exist. This must run BEFORE the #DEBHELPER# token below:
+# cargo-deb's systemd fragment stops the service there, and the disconnect needs a
+# live daemon. $1 is "remove" on removal and "upgrade" on upgrade — an upgrade
+# keeps the tunnel up throughout.
+set -e
+
+if [ "$1" = "remove" ] && [ -x /usr/bin/wirefinder ]; then
+    # Errors (daemon not running, tunnel already down) must not block removal.
+    /usr/bin/wirefinder disconnect || true
+fi
+
+#DEBHELPER#
+
+exit 0

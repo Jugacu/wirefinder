@@ -50,7 +50,10 @@ Four crates plus the GUI, in a Cargo workspace (`Cargo.toml`):
   an in-memory fake — no root, no kernel, no network.
 - **`server`** — the Unix-socket transport (framing, accept loop, locked-down
   socket permissions, per-connection timeouts and request size cap).
-- **`main`** — wiring + signal-handled teardown.
+- **`main`** — wiring + the signal handler. Stopping the daemon is **control-plane
+  only**: WireGuard runs in-kernel, so the tunnel (and its kill-switch routing)
+  deliberately survives stops and package-upgrade restarts. Teardown happens only
+  via an explicit disconnect, or on package removal (`install/prerm`).
 
 ### The trust boundary
 
@@ -60,6 +63,11 @@ clients only ever learn the derived public key. All keys live in the same `0600`
 state file. The control socket lives in a `0750 root:wirefinder` directory and is
 itself `0660 root:wirefinder`; group membership is how the unprivileged GUI is
 allowed to talk to a root daemon.
+
+Membership in the `wirefinder` group is therefore **full tunnel control**: anyone
+in it can add a server pointing at an endpoint (and DNS) they choose and switch
+all traffic to it. Add only the humans who should be able to reconfigure the VPN —
+it is an admin boundary, not a "may view status" one.
 
 ## Development
 

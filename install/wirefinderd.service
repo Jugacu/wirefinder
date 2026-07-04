@@ -16,9 +16,11 @@ ExecStart=/usr/bin/wirefinderd
 
 # Persisted state (the interface private key + servers) lives here. systemd creates
 # /var/lib/wirefinder as root:wirefinder before the daemon starts; the daemon writes
-# state.json mode 0600, so the private key stays root-only even though the group can
-# list the directory. This matches config::DEFAULT_STATE_PATH in the daemon.
+# state.json mode 0600, so the private key stays root-only. 0750 keeps even the
+# directory listing away from everyone outside the wirefinder group. This matches
+# config::DEFAULT_STATE_PATH in the daemon.
 StateDirectory=wirefinder
+StateDirectoryMode=0750
 
 # The control socket lives in /run/wirefinder (see proto::SOCKET_PATH). systemd
 # provisions this as root:wirefinder before start; 0750 means only the wirefinder
@@ -35,22 +37,55 @@ RuntimeDirectoryMode=0750
 # group is how we hand access to the unprivileged UI.
 Group=wirefinder
 
-# Stop = SIGTERM. The ctrl-c handler from lesson 8 catches SIGTERM, tears the
-# tunnel down, and removes the socket — so `systemctl stop` is a clean teardown,
-# not a yank. SIGTERM is systemd's default KillSignal; stated here for intent.
-# TimeoutStopSec gives that teardown time before systemd escalates to SIGKILL.
+# Stop = SIGTERM, and stopping is CONTROL-PLANE ONLY: WireGuard runs in-kernel,
+# so the daemon's signal handler exits without touching the tunnel — a stop or a
+# package-upgrade restart must never drop the user's VPN (or its kill-switch
+# routing). The tunnel comes down only via an explicit Disconnect, or on package
+# removal (install/prerm). SIGTERM is systemd's default KillSignal; stated here
+# for intent. TimeoutStopSec bounds the handler before SIGKILL.
 KillSignal=SIGTERM
 TimeoutStopSec=10s
 
-# Restart on a crash, but not on a clean stop (a SIGTERM teardown exits 0).
+# Restart on a crash, but not on a clean stop (the signal handler exits 0). A
+# restarted daemon reattaches to the live interface by reading its state.
 Restart=on-failure
 RestartSec=2s
 
-# Even as root: forbid privilege escalation and cap the process at the single
-# capability it actually needs. This shrinks blast radius without breaking the
-# DNS path (see the lesson's note on going fully non-root).
+# ── Sandboxing ────────────────────────────────────────────────────────────────
+# As tight as the daemon's real needs allow. What it actually does: netlink to
+# configure the interface (AF_NETLINK), the control socket (AF_UNIX), endpoint
+# hostname lookups (AF_INET/AF_INET6), and a resolvconf shell-out that — depending
+# on the distro — rewrites /etc/resolv.conf, /run/resolvconf, or talks to
+# systemd-resolved over the D-Bus socket in /run. That resolver variability is why
+# ProtectSystem stays at "true" (/usr and /boot read-only) rather than "strict":
+# /etc and /run must remain writable for DNS changes to apply.
 NoNewPrivileges=yes
 CapabilityBoundingSet=CAP_NET_ADMIN
+ProtectSystem=true
+ProtectHome=yes
+PrivateTmp=yes
+# ProtectKernelTunables is deliberately ABSENT: every full-tunnel switch writes
+# net.ipv4.conf.all.src_valid_mark=1 to /proc/sys (defguard's routing setup, the
+# same sysctl wg-quick sets), and a read-only /proc/sys fails the switch with
+# EROFS. The write is unconditional in defguard, so it can't be pre-set once.
+# Blocks module-loading SYSCALLS from the daemon. First-use autoload of the
+# wireguard module still works — the kernel loads it itself on interface creation.
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+RestrictAddressFamilies=AF_UNIX AF_NETLINK AF_INET AF_INET6
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+# @system-service is systemd's curated allow-list (includes exec, needed for the
+# resolvconf shell-out). Denied syscalls fail with EPERM instead of killing the
+# daemon with SIGSYS, so a probing library degrades instead of crashing it.
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+SystemCallArchitectures=native
 
 [Install]
 WantedBy=multi-user.target

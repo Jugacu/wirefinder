@@ -25,11 +25,12 @@
 //! `disconnect`, the one moment the user actually wants the tunnel gone.
 
 use std::env;
-use std::net::{IpAddr, ToSocketAddrs};
+use std::net::{IpAddr, SocketAddr, ToSocketAddrs};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::str::FromStr;
-use std::time::SystemTime;
+use std::sync::mpsc;
+use std::time::{Duration, SystemTime};
 
 use defguard_wireguard_rs::host::Host;
 use defguard_wireguard_rs::key::Key;
@@ -76,8 +77,10 @@ pub trait Wireguard {
 
     /// Bring up `server`'s tunnel (its key, addresses, port) and make its peer the
     /// sole active one, applying routes and DNS. Reconfigures the live interface in
-    /// place when already up (leak-safe — see the module docs).
-    fn switch(&self, server: &ServerConfig) -> Result<(), String>;
+    /// place when already up (leak-safe — see the module docs). Returns the endpoint
+    /// address the peer was configured with, so the caller can refresh its cached
+    /// copy with every successful connection.
+    fn switch(&self, server: &ServerConfig) -> Result<SocketAddr, String>;
 
     /// Read live interface state, or `Err` if the interface is down/unreadable.
     fn status(&self) -> Result<LiveInterface, String>;
@@ -105,14 +108,73 @@ pub trait WgOps {
 /// Validate everything about a tunnel we can check without the kernel: our private
 /// key and the peer's public key parse, the endpoint resolves, and the addresses,
 /// allowed-IPs, and DNS are well-formed. Run when a client adds a server so bad
-/// input fails at configuration time, not at connect time.
-pub fn validate_server(server: &ServerConfig) -> Result<(), String> {
+/// input fails at configuration time, not at connect time. Returns the resolved
+/// endpoint address so the caller can cache it for DNS-free switching later.
+pub fn validate_server(server: &ServerConfig) -> Result<SocketAddr, String> {
     Key::from_str(server.private_key.trim())
         .map_err(|e| format!("server '{}': bad private_key: {e}", server.name))?;
-    build_peer(server)?;
+    let peer = build_peer(server)?;
     parse_dns(server)?;
     parse_addresses(server)?;
-    Ok(())
+    peer.endpoint.ok_or_else(|| {
+        format!(
+            "server '{}': endpoint resolved to no addresses",
+            server.name
+        )
+    })
+}
+
+/// How long a hostname lookup may block. getaddrinfo has no timeout of its own and
+/// can stall for a long time when every resolver query is dropped — exactly the
+/// state a never-handshaked full tunnel's kill switch leaves the system in. The
+/// daemon is single-threaded, so an unbounded lookup would wedge every client.
+const RESOLVE_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// Resolve `host:port` to its first socket address. An IP-literal endpoint parses
+/// directly (no resolver involved); a hostname gets one getaddrinfo on a throwaway
+/// thread, abandoned at [`RESOLVE_TIMEOUT`].
+fn resolve_endpoint(server: &ServerConfig) -> Result<SocketAddr, String> {
+    let endpoint = server.endpoint.trim().to_string();
+    if let Ok(addr) = SocketAddr::from_str(&endpoint) {
+        return Ok(addr);
+    }
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = tx.send(
+            endpoint
+                .to_socket_addrs()
+                .map(|mut addrs| addrs.next())
+                .map_err(|e| e.to_string()),
+        );
+    });
+    let name = &server.name;
+    match rx.recv_timeout(RESOLVE_TIMEOUT) {
+        Ok(Ok(Some(addr))) => Ok(addr),
+        Ok(Ok(None)) => Err(format!(
+            "server '{name}': endpoint resolved to no addresses"
+        )),
+        Ok(Err(e)) => Err(format!("server '{name}': cannot resolve endpoint: {e}")),
+        Err(_) => Err(format!("server '{name}': endpoint resolution timed out")),
+    }
+}
+
+/// Prefer a fresh resolution, else the address cached at add/edit time. Pure, so
+/// the fallback rule is unit-tested without touching a resolver.
+fn or_cached(
+    fresh: Result<SocketAddr, String>,
+    cached: Option<&str>,
+) -> Result<SocketAddr, String> {
+    fresh.or_else(|e| cached.and_then(|c| SocketAddr::from_str(c).ok()).ok_or(e))
+}
+
+/// The endpoint address to configure: fresh when DNS answers, cached when it
+/// doesn't. The fallback is what lets a switch AWAY from a black-holed tunnel
+/// (kill switch up, resolver dead) still find its new server.
+fn endpoint_addr(server: &ServerConfig) -> Result<SocketAddr, String> {
+    or_cached(
+        resolve_endpoint(server),
+        server.resolved_endpoint.as_deref(),
+    )
 }
 
 /// Parse the tunnel's address(es) into `IpAddrMask`es, requiring at least one.
@@ -161,19 +223,7 @@ fn build_peer(server: &ServerConfig) -> Result<Peer, String> {
     let key = Key::from_str(server.public_key.trim())
         .map_err(|e| format!("server '{}': bad public_key: {e}", server.name))?;
     let mut peer = Peer::new(key);
-
-    let endpoint = server
-        .endpoint
-        .to_socket_addrs()
-        .map_err(|e| format!("server '{}': cannot resolve endpoint: {e}", server.name))?
-        .next()
-        .ok_or_else(|| {
-            format!(
-                "server '{}': endpoint resolved to no addresses",
-                server.name
-            )
-        })?;
-    peer.endpoint = Some(endpoint);
+    peer.endpoint = Some(endpoint_addr(server)?);
 
     for ip in &server.allowed_ips {
         let mask = IpAddrMask::from_str(ip.trim())
@@ -279,11 +329,17 @@ impl<O: WgOps> Wireguard for KernelWireguard<O> {
         self.ops.remove_interface()
     }
 
-    fn switch(&self, server: &ServerConfig) -> Result<(), String> {
+    fn switch(&self, server: &ServerConfig) -> Result<SocketAddr, String> {
         // Parse FIRST — fail before touching the tunnel.
         let peer = build_peer(server)?;
         let dns = parse_dns(server)?;
         parse_addresses(server)?;
+        let endpoint = peer.endpoint.ok_or_else(|| {
+            format!(
+                "server '{}': endpoint resolved to no addresses",
+                server.name
+            )
+        })?;
 
         match self.ops.read_interface_data() {
             Ok(host) => {
@@ -307,7 +363,7 @@ impl<O: WgOps> Wireguard for KernelWireguard<O> {
         // configure_interface; the persistent ip rules mean the gap is fail-closed.
         self.ops.configure_peer_routing(&[peer])?;
         self.apply_dns(&dns)?;
-        Ok(())
+        Ok(endpoint)
     }
 
     fn status(&self) -> Result<LiveInterface, String> {
@@ -465,6 +521,7 @@ mod tests {
             public_key: "HIgo9xNzJMWLKASShiTqIybxZ0U3wGLiUeJ1PKf8ykw=".into(),
             // Numeric endpoint so the test never depends on DNS resolution.
             endpoint: "198.51.100.10:51820".into(),
+            resolved_endpoint: None,
             addresses: vec!["10.0.0.2/24".into()],
             allowed_ips: vec!["0.0.0.0/0".into()],
             listen_port: 51820,
@@ -533,6 +590,50 @@ mod tests {
         let mut s = valid_server();
         s.preshared_key = Some("nope".into());
         assert!(validate_server(&s).unwrap_err().contains("preshared_key"));
+    }
+
+    // ── endpoint resolution ──────────────────────────────────────────────────────
+
+    #[test]
+    fn validate_returns_the_resolved_endpoint_for_caching() {
+        let addr = validate_server(&valid_server()).unwrap();
+        assert_eq!(addr.to_string(), "198.51.100.10:51820");
+    }
+
+    #[test]
+    fn an_ip_literal_endpoint_never_touches_the_resolver() {
+        // IPv4 and bracketed IPv6 literals parse directly.
+        let mut s = valid_server();
+        s.endpoint = "[2001:db8::1]:51820".into();
+        assert_eq!(
+            resolve_endpoint(&s).unwrap().to_string(),
+            "[2001:db8::1]:51820"
+        );
+    }
+
+    #[test]
+    fn a_failed_resolution_falls_back_to_the_cached_address() {
+        let fresh = Err("temporary failure in name resolution".to_string());
+        let addr = or_cached(fresh, Some("198.51.100.10:51820")).unwrap();
+        assert_eq!(addr.to_string(), "198.51.100.10:51820");
+    }
+
+    #[test]
+    fn a_failed_resolution_with_no_usable_cache_keeps_the_original_error() {
+        let err = "temporary failure in name resolution".to_string();
+        assert_eq!(or_cached(Err(err.clone()), None).unwrap_err(), err);
+        // A corrupt cached value must not mask the real error either.
+        assert_eq!(
+            or_cached(Err(err.clone()), Some("not-an-addr")).unwrap_err(),
+            err
+        );
+    }
+
+    #[test]
+    fn a_fresh_resolution_wins_over_the_cache() {
+        let fresh = Ok(SocketAddr::from_str("203.0.113.7:51820").unwrap());
+        let addr = or_cached(fresh, Some("198.51.100.10:51820")).unwrap();
+        assert_eq!(addr.to_string(), "203.0.113.7:51820");
     }
 
     // ── leak-safe switch ordering (recording fake, no root) ──────────────────────
@@ -842,6 +943,15 @@ mod tests {
                 .iter()
                 .any(|c| matches!(c, WgCall::ConfigureDns { .. }))
         );
+    }
+
+    /// The address handed back by a switch is the one the peer was configured
+    /// with — it's what the daemon writes into the endpoint cache.
+    #[test]
+    fn switch_returns_the_endpoint_it_configured() {
+        let wg = KernelWireguard::with_ops(RecordingWg::new(vec![Err("interface down".into())]));
+        let addr = wg.switch(&valid_server()).unwrap();
+        assert_eq!(addr.to_string(), "198.51.100.10:51820");
     }
 
     #[test]

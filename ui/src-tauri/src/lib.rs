@@ -10,12 +10,16 @@ use wirefinder_proto::{
 // Each command unwraps the daemon's tagged Response into the ONE payload the
 // frontend cares about. Ok → invoke() promise resolves; Err → it rejects. The
 // `_ => unexpected` arm guards against a daemon/proto version skew.
+//
+// Every command that talks to the daemon is `async`: Tauri runs sync commands on
+// the MAIN thread, so a daemon round-trip that stalls (it blocks up to the 10s
+// IPC timeout while the daemon is mid-switch) would freeze the whole window.
 fn unexpected() -> String {
     "unexpected response from daemon".into()
 }
 
 #[tauri::command]
-fn add_server(server: ServerSpec) -> Result<Vec<ServerInfo>, String> {
+async fn add_server(server: ServerSpec) -> Result<Vec<ServerInfo>, String> {
     match request(&Request::AddServer { server })? {
         Response::Servers(s) => Ok(s),
         Response::Error(e) => Err(e),
@@ -24,7 +28,7 @@ fn add_server(server: ServerSpec) -> Result<Vec<ServerInfo>, String> {
 }
 
 #[tauri::command]
-fn edit_server(server: ServerSpec) -> Result<Vec<ServerInfo>, String> {
+async fn edit_server(server: ServerSpec) -> Result<Vec<ServerInfo>, String> {
     match request(&Request::EditServer { server })? {
         Response::Servers(s) => Ok(s),
         Response::Error(e) => Err(e),
@@ -33,7 +37,7 @@ fn edit_server(server: ServerSpec) -> Result<Vec<ServerInfo>, String> {
 }
 
 #[tauri::command]
-fn get_server(name: String) -> Result<ServerDetail, String> {
+async fn get_server(name: String) -> Result<ServerDetail, String> {
     match request(&Request::GetServer { name })? {
         Response::ServerDetail(d) => Ok(d),
         Response::Error(e) => Err(e),
@@ -42,7 +46,7 @@ fn get_server(name: String) -> Result<ServerDetail, String> {
 }
 
 #[tauri::command]
-fn import_server(name: String, conf: String) -> Result<Vec<ServerInfo>, String> {
+async fn import_server(name: String, conf: String) -> Result<Vec<ServerInfo>, String> {
     match request(&Request::ImportServer { name, conf })? {
         Response::Servers(s) => Ok(s),
         Response::Error(e) => Err(e),
@@ -51,7 +55,7 @@ fn import_server(name: String, conf: String) -> Result<Vec<ServerInfo>, String> 
 }
 
 #[tauri::command]
-fn remove_server(name: String) -> Result<Vec<ServerInfo>, String> {
+async fn remove_server(name: String) -> Result<Vec<ServerInfo>, String> {
     match request(&Request::RemoveServer { name })? {
         Response::Servers(s) => Ok(s),
         Response::Error(e) => Err(e),
@@ -60,7 +64,7 @@ fn remove_server(name: String) -> Result<Vec<ServerInfo>, String> {
 }
 
 #[tauri::command]
-fn list_servers(query: Option<String>) -> Result<Vec<ServerInfo>, String> {
+async fn list_servers(query: Option<String>) -> Result<Vec<ServerInfo>, String> {
     match request(&Request::ListServers { query })? {
         Response::Servers(s) => Ok(s),
         Response::Error(e) => Err(e),
@@ -69,7 +73,7 @@ fn list_servers(query: Option<String>) -> Result<Vec<ServerInfo>, String> {
 }
 
 #[tauri::command]
-fn status() -> Result<Option<InterfaceStatus>, String> {
+async fn status() -> Result<Option<InterfaceStatus>, String> {
     match request(&Request::Status)? {
         Response::Status(s) => Ok(Some(s)),
         Response::Disconnected => Ok(None), // daemon up, tunnel down
@@ -79,7 +83,7 @@ fn status() -> Result<Option<InterfaceStatus>, String> {
 }
 
 #[tauri::command]
-fn disconnect() -> Result<(), String> {
+async fn disconnect() -> Result<(), String> {
     match request(&Request::Disconnect)? {
         Response::Disconnected => Ok(()),
         Response::Error(e) => Err(e),
@@ -88,7 +92,7 @@ fn disconnect() -> Result<(), String> {
 }
 
 #[tauri::command]
-fn switch_server(name: String) -> Result<String, String> {
+async fn switch_server(name: String) -> Result<String, String> {
     match request(&Request::SwitchServer { name })? {
         Response::Switched { name } => Ok(name),
         Response::Error(e) => Err(e),

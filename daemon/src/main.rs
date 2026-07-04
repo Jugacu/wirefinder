@@ -20,7 +20,7 @@ use wirefinder_proto::SOCKET_PATH;
 
 use crate::config::Store;
 use crate::daemon::Daemon;
-use crate::wireguard::{KernelWireguard, Wireguard};
+use crate::wireguard::KernelWireguard;
 
 fn main() -> std::io::Result<()> {
     let store = Store::new(config::default_state_path());
@@ -44,17 +44,17 @@ fn main() -> std::io::Result<()> {
     Ok(())
 }
 
-/// On SIGINT/SIGTERM, tear the tunnel down and remove the socket before exiting.
-/// The handler runs on its own thread and can't borrow the `Daemon`, so it builds
-/// a fresh kernel backend (which only needs the fixed interface name) to bring the
-/// interface down. `systemctl stop` sends SIGTERM, so this doubles as the clean
-/// shutdown path.
+/// On SIGINT/SIGTERM, exit cleanly WITHOUT touching the tunnel. WireGuard runs
+/// in-kernel — this daemon is control plane only — so a stop must not drop the
+/// tunnel and its kill-switch routing out from under the user. In particular,
+/// every package upgrade restarts the service: tearing down here would silently
+/// dump traffic onto the bare network mid-upgrade. The tunnel comes down only on
+/// an explicit `Disconnect` (or package removal — see install/prerm); a restarted
+/// daemon simply reattaches to the live interface via `status`. We remove the
+/// socket so a non-systemd (dev) run leaves no stale file behind.
 fn install_signal_handler() {
     ctrlc::set_handler(move || {
-        eprintln!("\nwirefinderd: signal received, tearing down");
-        if let Err(e) = KernelWireguard::default().disconnect() {
-            eprintln!("wirefinderd: teardown failed: {e}");
-        }
+        eprintln!("\nwirefinderd: signal received, exiting (tunnel left as-is)");
         let _ = fs::remove_file(SOCKET_PATH);
         std::process::exit(0);
     })

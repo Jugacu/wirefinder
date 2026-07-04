@@ -35,7 +35,7 @@ that owns the tunnel interface, a CLI (wirefinder), and a desktop GUI — all in
 one package. depends="$auto" picks up the GUI's webkit/GTK runtime libraries \
 from the built binary."""
 depends = "$auto"
-recommends = "openresolv"                 # the DNS path shells out to resolvconf (lesson 10)
+recommends = "openresolv"                 # the DNS path shells out to resolvconf
 assets = [
     # Daemon + CLI: built into the workspace target (target/release).
     ["target/release/wirefinderd", "usr/bin/", "755"],

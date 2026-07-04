@@ -124,8 +124,8 @@ mod tests {
         fn disconnect(&self) -> Result<(), String> {
             Ok(())
         }
-        fn switch(&self, _: &ServerConfig) -> Result<(), String> {
-            Ok(())
+        fn switch(&self, _: &ServerConfig) -> Result<std::net::SocketAddr, String> {
+            Ok("198.51.100.10:51820".parse().unwrap())
         }
         fn status(&self) -> Result<LiveInterface, String> {
             Err("down".into())

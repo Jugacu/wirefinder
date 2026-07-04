@@ -13,8 +13,8 @@
 #
 # These are the two halves of wirefinder's architecture (privileged daemon +
 # unprivileged UI), and they install differently, so they build as separate
-# jobs. Turning build-ui's output into an installer (.deb/AppImage) is the
-# later packaging lesson; today it's a compile-only gate.
+# jobs. Packaging build-ui's output into the installer is release.yml's job
+# (on tags); here it's a compile-only gate.
 #
 # Pinned to current major versions (verified 2026-06-14):
 #   actions/checkout@v6      actions/upload-artifact@v7   dtolnay/rust-toolchain
@@ -93,9 +93,9 @@ jobs:
           if-no-files-found: error
 
   # The desktop GUI. Runs in parallel with `build`. This job only proves the
-  # Tauri app COMPILES — it doesn't ship anything yet (that's the packaging
-  # lesson). The UI is its own Cargo workspace under ui/src-tauri and pulls
-  # in webkit + GTK system libs, which is why it can't ride along in `build`.
+  # Tauri app COMPILES — shipping it is release.yml's job. The UI is its own
+  # Cargo workspace under ui/src-tauri and pulls in webkit + GTK system libs,
+  # which is why it can't ride along in `build`.
   build-ui:
     runs-on: ubuntu-latest
 
@@ -150,7 +150,7 @@ jobs:
       # (no release optimization) — this is only a compile gate, the binary is
       # never shipped from here, so we skip the slow optimized build; release.yml
       # verifies the release profile on tags. --no-bundle skips the .deb/AppImage
-      # installer generation (deferred to the packaging lesson). tauri.conf.json's
+      # installer generation (release.yml owns packaging). tauri.conf.json's
       # beforeBuildCommand (`pnpm build` = tsc && vite build) still type-checks and
       # bundles the frontend before the Rust compile regardless of profile.
       - name: Build Tauri app (debug, no bundle)

@@ -109,11 +109,12 @@ impl<W: Wireguard> Daemon<W> {
             .filter(|k| !k.is_empty())
             .unwrap_or_else(crate::keys::generate_private_key);
 
-        let server = ServerConfig {
+        let mut server = ServerConfig {
             name: spec.name.trim().to_string(),
             private_key,
             public_key: spec.public_key,
             endpoint: spec.endpoint,
+            resolved_endpoint: None,
             addresses: spec.addresses,
             allowed_ips: spec.allowed_ips,
             listen_port: spec.listen_port.unwrap_or(0),
@@ -123,7 +124,9 @@ impl<W: Wireguard> Daemon<W> {
             dns: spec.dns,
         };
         // Reject malformed input (keys, addresses, peer) before we persist anything.
-        wireguard::validate_server(&server)?;
+        // Cache the resolved endpoint alongside, so a later switch can proceed even
+        // when DNS is unreachable (e.g. switching away from a black-holed tunnel).
+        server.resolved_endpoint = Some(wireguard::validate_server(&server)?.to_string());
         self.cfg.upsert_server(server);
         self.persist()
     }
@@ -203,11 +206,12 @@ impl<W: Wireguard> Daemon<W> {
             _ => existing.preshared_key,
         };
 
-        let server = ServerConfig {
+        let mut server = ServerConfig {
             name,
             private_key,
             public_key: spec.public_key,
             endpoint: spec.endpoint,
+            resolved_endpoint: None,
             addresses: spec.addresses,
             allowed_ips: spec.allowed_ips,
             listen_port: spec.listen_port.unwrap_or(0),
@@ -216,8 +220,9 @@ impl<W: Wireguard> Daemon<W> {
             preshared_key,
             dns: spec.dns,
         };
-        // Reject malformed input before we persist anything.
-        wireguard::validate_server(&server)?;
+        // Reject malformed input before we persist anything, re-caching the resolved
+        // endpoint (the edit may have changed it).
+        server.resolved_endpoint = Some(wireguard::validate_server(&server)?.to_string());
         self.cfg.upsert_server(server); // replace-by-name; existence enforced above
         self.persist()
     }
@@ -247,8 +252,19 @@ impl<W: Wireguard> Daemon<W> {
         self.cfg
             .servers
             .iter()
-            .filter_map(|s| {
-                let mut info = s.info(false).ok()?;
+            .map(|s| {
+                // A server whose stored private key no longer parses (a hand-edited
+                // or corrupted state file) must stay VISIBLE: silently dropping it
+                // would leave an entry the GUI can neither show nor remove. It lists
+                // with a placeholder key; switching to it surfaces the real error.
+                let mut info = s.info(false).unwrap_or_else(|e| ServerInfo {
+                    name: s.name.clone(),
+                    endpoint: s.endpoint.clone(),
+                    addresses: s.addresses.clone(),
+                    public_key: format!("(unavailable: {e})"),
+                    active: false,
+                    state: None,
+                });
                 info.active = active_key.as_deref() == Some(info.public_key.as_str());
                 if info.active {
                     // The active tunnel's sole peer is its server; derive its state
@@ -259,7 +275,7 @@ impl<W: Wireguard> Daemon<W> {
                         .and_then(handshake_age);
                     info.state = Some(derive_state(age, connecting));
                 }
-                Some(info)
+                info
             })
             .collect()
     }
@@ -341,8 +357,22 @@ impl<W: Wireguard> Daemon<W> {
                     None => return Response::Error(format!("unknown server '{name}'")),
                 };
                 match self.wg.switch(&server) {
-                    Ok(()) => {
+                    Ok(endpoint) => {
                         self.mark_connecting(); // open the connecting window
+                        // Refresh the cached endpoint with the address actually
+                        // configured, so the DNS-dead fallback is as fresh as the
+                        // last successful connection (providers rotate IPs).
+                        // Best-effort: the switch succeeded, so a failed persist
+                        // must not turn it into an error.
+                        let addr = endpoint.to_string();
+                        if let Some(s) = self.cfg.servers.iter_mut().find(|s| s.name == name)
+                            && s.resolved_endpoint.as_deref() != Some(addr.as_str())
+                        {
+                            s.resolved_endpoint = Some(addr);
+                            if let Err(e) = self.persist() {
+                                eprintln!("wirefinderd: could not persist endpoint cache: {e}");
+                            }
+                        }
                         Response::Switched { name }
                     }
                     Err(e) => Response::Error(e),
@@ -419,7 +449,7 @@ mod tests {
             *self.live_pubkey.borrow_mut() = None;
             Ok(())
         }
-        fn switch(&self, server: &ServerConfig) -> Result<(), String> {
+        fn switch(&self, server: &ServerConfig) -> Result<std::net::SocketAddr, String> {
             self.record(&format!("switch:{}", server.name));
             *self.last_switch_addresses.borrow_mut() = server.addresses.clone();
             self.check_fail()?;
@@ -430,7 +460,8 @@ mod tests {
                 public_key: server.public_key.clone(),
                 last_handshake: None,
             }]);
-            Ok(())
+            // Fixtures use IP-literal endpoints, so "resolution" is a plain parse.
+            server.endpoint.parse().map_err(|e| format!("{e}"))
         }
         fn status(&self) -> Result<LiveInterface, String> {
             let peers = self
@@ -575,6 +606,60 @@ mod tests {
         assert_ne!(info.public_key, stored_private);
     }
 
+    /// Adding a server caches its resolved endpoint, so a later switch can fall
+    /// back to it when DNS is dead (e.g. switching away from a black-holed tunnel).
+    #[test]
+    fn add_server_caches_the_resolved_endpoint() {
+        let (_dir, d) = onboarded();
+        assert_eq!(
+            d.cfg.servers[0].resolved_endpoint.as_deref(),
+            Some("198.51.100.10:51820")
+        );
+    }
+
+    /// A successful switch writes the endpoint it actually connected with back into
+    /// the cache (and persists it), so the fallback tracks the freshest known
+    /// address — not the one from whenever the server was last added or edited.
+    #[test]
+    fn a_successful_switch_refreshes_and_persists_the_cached_endpoint() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("state.json");
+        {
+            let mut d = Daemon::load(Store::new(path.clone()), FakeWireguard::default()).unwrap();
+            d.handle(Request::AddServer {
+                server: server("nexus"),
+            });
+            // Simulate a stale cache from an earlier resolution.
+            d.cfg.servers[0].resolved_endpoint = Some("192.0.2.99:51820".into());
+            d.handle(Request::SwitchServer {
+                name: "nexus".into(),
+            });
+            assert_eq!(
+                d.cfg.servers[0].resolved_endpoint.as_deref(),
+                Some("198.51.100.10:51820"),
+                "the switch's endpoint replaces the stale cache"
+            );
+        }
+        // The refresh survives a daemon restart — it was persisted, not just held.
+        let d2 = Daemon::load(Store::new(path), FakeWireguard::default()).unwrap();
+        assert_eq!(
+            d2.cfg.servers[0].resolved_endpoint.as_deref(),
+            Some("198.51.100.10:51820")
+        );
+    }
+
+    #[test]
+    fn edit_refreshes_the_cached_resolved_endpoint() {
+        let (_dir, mut d) = onboarded();
+        let mut edit = server("nexus");
+        edit.endpoint = "198.51.100.20:51820".into();
+        d.handle(Request::EditServer { server: edit });
+        assert_eq!(
+            d.cfg.servers[0].resolved_endpoint.as_deref(),
+            Some("198.51.100.20:51820")
+        );
+    }
+
     #[test]
     fn add_server_adopts_a_supplied_private_key() {
         let (_dir, mut d) = fresh_daemon();
@@ -628,6 +713,32 @@ mod tests {
             panic!("expected Error");
         };
         assert!(e.contains("name"), "{e}");
+    }
+
+    /// A stored entry whose private key no longer parses (hand-edited/corrupted
+    /// state) must still be listed — hidden entries can't be seen or removed from
+    /// a client — and removing it must work.
+    #[test]
+    fn a_server_with_a_corrupt_stored_key_is_still_listed_and_removable() {
+        let (_dir, mut d) = onboarded();
+        d.cfg.servers[0].private_key = "corrupted".into();
+
+        let list = servers(&mut d);
+        assert_eq!(list.len(), 1, "the broken entry must not vanish");
+        assert_eq!(list[0].name, "nexus");
+        assert!(
+            list[0].public_key.contains("unavailable"),
+            "placeholder names the problem: {}",
+            list[0].public_key
+        );
+        assert!(!list[0].active);
+
+        let Response::Servers(left) = d.handle(Request::RemoveServer {
+            name: "nexus".into(),
+        }) else {
+            panic!("expected Servers");
+        };
+        assert!(left.is_empty(), "the broken entry must be removable");
     }
 
     #[test]

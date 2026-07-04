@@ -76,6 +76,13 @@ pub struct ServerConfig {
     pub public_key: String,
     /// `host:port`, e.g. `vpn.example.com:51820`.
     pub endpoint: String,
+    /// The endpoint's last successfully resolved socket address (`ip:port`),
+    /// cached whenever the server is added or edited. A switch prefers a fresh
+    /// resolution but falls back to this when DNS is unreachable — e.g. switching
+    /// away from a tunnel whose provider never handshook, where the kill switch
+    /// black-holes every resolver query.
+    #[serde(default)]
+    pub resolved_endpoint: Option<String>,
     /// This tunnel's address(es), e.g. `["10.0.0.2/24"]` (possibly dual-stack).
     pub addresses: Vec<String>,
     /// Traffic to route into the tunnel, e.g. `["0.0.0.0/0"]` for a full tunnel.
@@ -153,9 +160,11 @@ impl Store {
         }
     }
 
-    /// Persist the config atomically: write a sibling temp file with mode 0600,
-    /// flush it, then rename over the target. A crash mid-write can never leave a
-    /// truncated state file — the reader sees either the old file or the new one.
+    /// Persist the config atomically AND durably: write a sibling temp file with
+    /// mode 0600, fsync it, rename over the target, then fsync the directory. The
+    /// rename gives atomicity (a reader sees either the old file or the new one);
+    /// the directory fsync gives durability (without it, a crash right after
+    /// "success" can roll the rename itself back to the old file).
     pub fn save(&self, cfg: &Config) -> Result<(), String> {
         if let Some(dir) = self.path.parent()
             && !dir.as_os_str().is_empty()
@@ -169,6 +178,13 @@ impl Store {
         write_private(&tmp, json.as_bytes()).map_err(|e| format!("{}: {e}", tmp.display()))?;
         fs::rename(&tmp, &self.path)
             .map_err(|e| format!("{} -> {}: {e}", tmp.display(), self.path.display()))?;
+        if let Some(dir) = self.path.parent()
+            && !dir.as_os_str().is_empty()
+        {
+            File::open(dir)
+                .and_then(|d| d.sync_all())
+                .map_err(|e| format!("{}: fsync: {e}", dir.display()))?;
+        }
         Ok(())
     }
 }
@@ -197,6 +213,7 @@ mod tests {
             private_key: keys::generate_private_key(),
             public_key: "HIgo9xNzJMWLKASShiTqIybxZ0U3wGLiUeJ1PKf8ykw=".into(),
             endpoint: "vpn.example.com:51820".into(),
+            resolved_endpoint: Some("198.51.100.10:51820".into()),
             addresses: vec!["10.0.0.2/24".into()],
             allowed_ips: vec!["0.0.0.0/0".into()],
             listen_port: 51820,
