@@ -14,48 +14,43 @@
 }
 
 .field > span {
-  font-size: 0.85rem;
-  font-weight: 600;
+  font-size: 0.78rem;
+  font-weight: 650;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
   color: var(--muted);
 }
 
-.field input {
+.field input,
+.field textarea {
   font: inherit;
-  background: var(--bg);
+  background: var(--field);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   padding: 0.55rem 0.7rem;
   color: var(--text);
   transition:
-    border-color 0.15s ease,
-    box-shadow 0.15s ease;
+    border-color 0.2s ease,
+    box-shadow 0.2s ease,
+    background 0.2s ease;
 }
 
 .field textarea {
-  font: inherit;
   font-family: "Geist Mono", ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace;
   font-size: 0.82rem;
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  padding: 0.55rem 0.7rem;
-  color: var(--text);
   resize: vertical;
-  transition:
-    border-color 0.15s ease,
-    box-shadow 0.15s ease;
 }
 
 .field input::placeholder,
 .field textarea::placeholder {
-  color: #56646f;
+  color: var(--faint);
 }
 
 .field input:focus,
 .field textarea:focus {
   outline: none;
   border-color: var(--accent);
-  box-shadow: 0 0 0 3px rgba(45, 212, 191, 0.15);
+  box-shadow: 0 0 0 3px rgba(54, 198, 230, 0.14);
 }
 
 /* Native file input — keep it legible on the dark surface. */
@@ -70,10 +65,18 @@
   margin-right: 0.6rem;
   padding: 0.3rem 0.7rem;
   border: 1px solid var(--border);
-  border-radius: 6px;
-  background: var(--surface-1);
+  border-radius: 8px;
+  background: var(--surface-2);
   color: var(--text);
   cursor: pointer;
+  transition:
+    background 0.15s ease,
+    border-color 0.15s ease;
+}
+
+.field input[type="file"]::file-selector-button:hover {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: var(--border-strong);
 }
 
 .field small {
@@ -88,12 +91,24 @@
   font-weight: 600;
   padding: 0.25rem 0;
   user-select: none;
+  transition: color 0.15s ease;
 }
 
 .advanced[open] {
   display: flex;
   flex-direction: column;
   gap: 0.85rem;
+}
+
+.advanced[open] > *:not(summary) {
+  animation: field-in 0.35s var(--ease-out) backwards;
+}
+
+@keyframes field-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
 }
 
 .advanced summary:hover {
@@ -111,7 +126,7 @@
 
 .segmented {
   display: flex;
-  background: var(--bg);
+  background: var(--field);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   padding: 3px;
@@ -125,23 +140,22 @@
   font-size: 0.9rem;
   padding: 0.45rem;
   border: none;
-  border-radius: 6px;
+  border-radius: 7px;
   background: transparent;
   color: var(--muted);
   cursor: pointer;
   transition:
-    background 0.15s ease,
-    color 0.15s ease;
+    background 0.2s ease,
+    color 0.2s ease,
+    box-shadow 0.2s ease;
+}
+
+.segmented button:hover {
+  color: var(--text);
 }
 
 .segmented button.active {
   background: var(--surface-2);
   color: var(--text);
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .segmented button,
-  .field input {
-    transition: none;
-  }
+  box-shadow: inset 0 0 0 1px var(--border);
 }

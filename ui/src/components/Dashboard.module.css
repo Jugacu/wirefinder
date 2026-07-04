@@ -10,6 +10,25 @@
 }
 
 .topbar {
+  animation: rise 0.55s var(--ease-out) backwards;
+}
+
+.hero {
+  animation: rise 0.55s var(--ease-out) 0.07s backwards;
+}
+
+.servers-panel {
+  animation: rise 0.55s var(--ease-out) 0.14s backwards;
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+}
+
+.topbar {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -17,7 +36,12 @@
   padding-right: 2.25rem;
 }
 
-.topbarRight {
+.topbar h1 {
+  font-weight: 650;
+  letter-spacing: -0.02em;
+}
+
+.topbar-right {
   display: flex;
   align-items: center;
   gap: 0.5rem;
@@ -26,23 +50,44 @@
 /* ── Status pill ──────────────────────────────────────────────────────────── */
 
 .pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
   font-size: 0.78rem;
   font-weight: 600;
-  padding: 0.25rem 0.6rem;
+  padding: 0.25rem 0.65rem;
   border-radius: 999px;
   border: 1px solid var(--border);
+  background: var(--surface);
   color: var(--muted);
+  transition:
+    color 0.4s ease,
+    border-color 0.4s ease,
+    background 0.4s ease;
+}
+
+.pill::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+  flex-shrink: 0;
 }
 
 .pill-Alive {
   color: var(--accent);
-  border-color: var(--accent-dim);
-  background: rgba(45, 212, 191, 0.1);
+  border-color: rgba(54, 198, 230, 0.35);
+  background: rgba(54, 198, 230, 0.09);
 }
 
 .pill-Connecting {
   color: var(--warn);
-  border-color: rgba(224, 168, 58, 0.3);
+  border-color: rgba(224, 168, 58, 0.35);
+}
+
+.pill-Connecting::before {
+  animation: blink 1.1s ease-in-out infinite;
 }
 
 .pill-Stale {
@@ -54,135 +99,293 @@
   color: var(--muted);
 }
 
+@keyframes blink {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
 /* ── Hero ─────────────────────────────────────────────────────────────────── */
 
 .hero {
+  position: relative;
+  overflow: hidden;
   display: flex;
   align-items: center;
-  gap: 1rem;
-  padding: 1.25rem;
+  gap: 1.15rem;
+  padding: 1.35rem 1.4rem;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius);
   box-shadow: var(--shadow);
 }
 
+.hero > * {
+  z-index: 1;
+}
+
+.hero::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: radial-gradient(70% 130% at 10% 50%, rgba(54, 198, 230, 0.12), transparent 60%);
+  opacity: 0;
+  transition: opacity 0.7s ease;
+}
+
+.hero-Alive::before {
+  opacity: 1;
+}
+
+.hero-Connecting::before {
+  background: radial-gradient(70% 130% at 10% 50%, rgba(224, 168, 58, 0.13), transparent 60%);
+  opacity: 1;
+  animation: breathe 2.6s ease-in-out infinite;
+}
+
+.hero-Stale::before {
+  background: radial-gradient(70% 130% at 10% 50%, rgba(224, 168, 58, 0.08), transparent 60%);
+  opacity: 1;
+}
+
 .hero-ring {
-  width: 44px;
-  height: 44px;
-  border-radius: 50%;
+  position: relative;
+  width: 56px;
+  height: 56px;
+  flex-shrink: 0;
   display: grid;
   place-items: center;
-  border: 2px solid var(--border);
-  flex-shrink: 0;
+}
+
+.ring-svg {
+  position: absolute;
+  inset: 0;
+  overflow: visible;
+  transform: rotate(-90deg);
+}
+
+.ring-track {
+  fill: none;
+  stroke: var(--border);
+  stroke-width: 2;
+}
+
+.ring-arc {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 2.5;
+  stroke-linecap: round;
+  stroke-dasharray: 100;
+  stroke-dashoffset: 100;
+  opacity: 0;
+  transition:
+    stroke-dashoffset 0.9s var(--ease-out),
+    stroke-dasharray 0.9s var(--ease-out),
+    stroke 0.4s ease,
+    opacity 0.4s ease;
+}
+
+.hero-Alive .ring-arc,
+.hero-Stale .ring-arc,
+.hero-Connecting .ring-arc {
+  opacity: 1;
+}
+
+.hero-Alive .ring-arc {
+  stroke-dashoffset: 0;
+  filter: drop-shadow(0 0 5px rgba(54, 198, 230, 0.6));
+}
+
+.hero-Stale .ring-arc {
+  stroke-dashoffset: 0;
+  stroke: var(--warn);
+}
+
+.hero-Connecting .ring-arc {
+  stroke: var(--warn);
+  stroke-dashoffset: 0;
+  stroke-dasharray: 26 74;
+}
+
+.hero-Connecting .ring-svg {
+  animation: ring-spin 1.1s linear infinite;
+}
+
+@keyframes ring-spin {
+  from {
+    transform: rotate(-90deg);
+  }
+  to {
+    transform: rotate(270deg);
+  }
 }
 
 .hero-dot {
   width: 14px;
   height: 14px;
   border-radius: 50%;
-  background: var(--muted);
+  background: var(--faint);
   transition:
-    background 0.3s ease,
-    box-shadow 0.3s ease;
-}
-
-.hero-text {
-  display: flex;
-  flex-direction: column;
-  flex: 1;
-}
-
-.hero-text strong {
-  font-size: 1.1rem;
-}
-
-.hero-Alive .hero-ring {
-  border-color: var(--accent);
+    background 0.4s ease,
+    box-shadow 0.4s ease,
+    transform 0.4s var(--ease-spring);
 }
 
 .hero-Alive .hero-dot {
   background: var(--accent);
-  box-shadow: 0 0 0 4px rgba(45, 212, 191, 0.18);
+  transform: scale(1.12);
+  box-shadow: 0 0 10px rgba(54, 198, 230, 0.6);
 }
 
 .hero-Connecting .hero-dot {
   background: var(--warn);
-  animation: pulse 1.2s ease-in-out infinite;
-}
-
-.hero-Stale .hero-ring {
-  border-color: var(--warn);
+  animation: dot-pulse 1.2s ease-in-out infinite;
 }
 
 .hero-Stale .hero-dot {
   background: var(--warn);
 }
 
-/* Idle states (Disconnected / Offline) keep the neutral grey ring + dot from the
-   base rules — that quietness IS their identity. */
-
-@keyframes pulse {
+@keyframes dot-pulse {
   0%,
   100% {
     opacity: 1;
-    box-shadow: 0 0 0 0 rgba(224, 168, 58, 0.35);
+    box-shadow: 0 0 0 0 rgba(224, 168, 58, 0.4);
   }
   50% {
     opacity: 0.6;
-    box-shadow: 0 0 0 6px rgba(224, 168, 58, 0);
+    box-shadow: 0 0 0 7px rgba(224, 168, 58, 0);
+  }
+}
+
+.sonar,
+.sonar-b {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  border: 1.5px solid var(--accent);
+  opacity: 0;
+  pointer-events: none;
+}
+
+.hero-Alive .sonar {
+  animation: sonar 2.8s ease-out infinite;
+}
+
+.hero-Alive .sonar-b {
+  animation: sonar 2.8s ease-out infinite 1.4s;
+}
+
+@keyframes sonar {
+  0% {
+    transform: scale(0.6);
+    opacity: 0.65;
+  }
+  70% {
+    opacity: 0;
+  }
+  100% {
+    transform: scale(1.55);
+    opacity: 0;
+  }
+}
+
+.hero-text {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+}
+
+.hero-title {
+  font-size: 1.12rem;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+
+.hero-stats {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  margin-top: 3px;
+  font-size: 0.8rem;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  animation: rise 0.45s var(--ease-out);
+}
+
+.stat-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.1rem 0.75rem;
+}
+
+.stat {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  white-space: nowrap;
+}
+
+.stat svg {
+  color: var(--accent);
+  flex-shrink: 0;
+}
+
+.hero-Stale .stat svg,
+.hero-Connecting .stat svg {
+  color: var(--warn);
+}
+
+@keyframes breathe {
+  0%,
+  100% {
+    opacity: 0.45;
+  }
+  50% {
+    opacity: 1;
   }
 }
 
 /* ── Ambient background glow ──────────────────────────────────────────────────
-   A peripheral echo of the hero dot: the same teal/gold state vocabulary, but
-   diffused into a soft radial glow anchored top-right (matching the body
-   gradient's glow position). Fixed + z-index: -1 keeps it behind every card and
-   anchored to the viewport, so a tall page (open Add/Edit form) never shifts it.
-   pointer-events: none so it never eats a click. */
+   A peripheral echo of the hero dot: the same cyan/amber state vocabulary,
+   diffused into a soft radial glow anchored top-right. Fixed + z-index: -1
+   keeps it behind every card and anchored to the viewport; pointer-events:
+   none so it never eats a click. */
 .ambient {
   position: fixed;
   inset: 0;
   z-index: -1;
   pointer-events: none;
   opacity: 0;
-  /* Fade in/out as state changes. While an active state's breathe animation
-     runs it drives opacity itself; on return to an idle state the animation is
-     gone and opacity eases back to 0 through this transition. */
-  transition: opacity 0.6s ease;
+  transition: opacity 0.8s ease;
 }
 
 .ambient-Connecting {
-  background: radial-gradient(60% 50% at 85% 15%, rgba(224, 168, 58, 0.22), transparent 70%);
-  animation: breathe 3s ease-in-out infinite;
+  background: radial-gradient(65% 55% at 85% 12%, rgba(224, 168, 58, 0.2), transparent 70%);
+  opacity: 0.6;
+  animation: breathe 2.6s ease-in-out infinite;
 }
 
 .ambient-Alive {
-  /* Steady, static teal — "connected" reads as a settled, present state. Only
+  /* Steady teal — "connected" reads as a settled, present state. Only
      Connecting breathes; once the tunnel is up the glow holds still. */
-  background: radial-gradient(60% 50% at 85% 15%, rgba(54, 198, 230, 0.18), transparent 70%);
+  background: radial-gradient(65% 55% at 85% 12%, rgba(54, 198, 230, 0.14), transparent 70%);
   opacity: 1;
 }
 
 .ambient-Stale {
-  /* Connected but the handshake has aged — a quiet, static gold, mirroring how
-     the hero treats Stale. No breath; it isn't actively doing anything. */
-  background: radial-gradient(60% 50% at 85% 15%, rgba(224, 168, 58, 0.1), transparent 70%);
+  background: radial-gradient(65% 55% at 85% 12%, rgba(224, 168, 58, 0.1), transparent 70%);
   opacity: 1;
 }
 
 /* Never / Disconnected / Offline have no rule → the base opacity: 0 keeps the
    background plain. */
-
-@keyframes breathe {
-  0%,
-  100% {
-    opacity: 0.35;
-  }
-  50% {
-    opacity: 0.7;
-  }
-}
 
 /* ── Servers ──────────────────────────────────────────────────────────────── */
 
@@ -195,6 +398,11 @@
 
 .section-head h2 {
   margin: 0;
+  font-size: 0.78rem;
+  font-weight: 650;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--muted);
 }
 
 .add-actions {
@@ -221,13 +429,20 @@
   height: 28px;
   padding: 0;
   border: none;
+  border-radius: 8px;
   background: transparent;
   color: var(--muted);
   cursor: pointer;
-  transition: color 0.12s ease;
+  transition:
+    color 0.15s ease,
+    background 0.15s ease;
 }
 
-.search-toggle:hover,
+.search-toggle:hover {
+  color: var(--text);
+  background: var(--surface-2);
+}
+
 .search-toggle-active {
   color: var(--text);
 }
@@ -241,15 +456,18 @@
   max-height: 0;
   opacity: 0;
   margin-bottom: 0;
+  transform: translateY(-4px);
   transition:
-    max-height 0.2s ease,
-    opacity 0.2s ease,
-    margin-bottom 0.2s ease;
+    max-height 0.25s var(--ease-out),
+    opacity 0.25s ease,
+    transform 0.25s var(--ease-out),
+    margin-bottom 0.25s ease;
 }
 
 .search-row-open {
   max-height: 3rem;
   opacity: 1;
+  transform: translateY(0);
   margin-bottom: 0.6rem;
 }
 
@@ -267,23 +485,23 @@
   font: inherit;
   font-size: 0.9rem;
   color: var(--text);
-  background: var(--bg);
+  background: var(--field);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   padding: 0.5rem 0.7rem 0.5rem 2rem;
   transition:
-    border-color 0.15s ease,
-    box-shadow 0.15s ease;
+    border-color 0.2s ease,
+    box-shadow 0.2s ease;
 }
 
 .search-input::placeholder {
-  color: #56646f;
+  color: var(--faint);
 }
 
 .search-input:focus {
   outline: none;
   border-color: var(--accent);
-  box-shadow: 0 0 0 3px rgba(54, 198, 230, 0.15);
+  box-shadow: 0 0 0 3px rgba(54, 198, 230, 0.14);
 }
 
 /* Re-skin the native clear control (WebKit): the default glyph is a hard black
@@ -311,19 +529,37 @@
   margin: 0;
   display: flex;
   flex-direction: column;
-  gap: 0.4rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
 }
 
 .servers li {
+  --i: 0;
+  position: relative;
   display: flex;
   flex-direction: column;
-  padding: 0.7rem 0.85rem;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  transition:
-    border-color 0.15s ease,
-    background 0.15s ease;
+  padding: 0.8rem 0.9rem;
+  transition: background 0.25s ease;
+  animation: rise 0.5s var(--ease-out) backwards;
+  animation-delay: calc(min(var(--i), 8) * 50ms);
+}
+
+.servers li:first-child {
+  border-radius: calc(var(--radius) - 1px) calc(var(--radius) - 1px) 0 0;
+}
+
+.servers li:last-child {
+  border-radius: 0 0 calc(var(--radius) - 1px) calc(var(--radius) - 1px);
+}
+
+.servers li + li {
+  border-top: 1px solid rgba(38, 88, 133, 0.55);
+}
+
+.servers li:hover {
+  background: rgba(255, 255, 255, 0.035);
 }
 
 .server-row {
@@ -338,36 +574,55 @@
   margin-top: 0.75rem;
   padding-top: 0.75rem;
   border-top: 1px solid var(--border);
+  animation: rise 0.4s var(--ease-out);
 }
 
 .servers li.active {
-  border-color: var(--accent-dim);
-  background: rgba(45, 212, 191, 0.06);
+  background: rgba(54, 198, 230, 0.08);
 }
 
-.servers .dot {
-  color: var(--muted);
-  font-size: 0.7rem;
+.dot {
+  position: relative;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--faint);
+  flex-shrink: 0;
+  transition:
+    background 0.3s ease,
+    box-shadow 0.3s ease;
 }
 
-.servers li.active .dot {
-  color: var(--accent);
+.dot-active {
+  background: var(--accent);
+  box-shadow: 0 0 8px rgba(54, 198, 230, 0.7);
+}
+
+.dot-connecting {
+  background: var(--warn);
+  box-shadow: 0 0 10px rgba(224, 168, 58, 0.8);
+  animation: blink 1.1s ease-in-out infinite;
 }
 
 .server-meta {
   display: flex;
   flex-direction: column;
+  gap: 2px;
   flex: 1;
   min-width: 0;
 }
 
 .server-meta .name {
   font-weight: 600;
+  font-size: 0.95rem;
+  letter-spacing: -0.005em;
 }
 
 .server-meta .endpoint {
+  font-family: "Geist Mono", ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace;
   color: var(--muted);
-  font-size: 0.82rem;
+  font-size: 0.78rem;
+  line-height: 1.4;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -384,18 +639,28 @@
   text-align: center;
   padding: 1rem;
   font-size: 0.9rem;
+  animation: rise 0.4s var(--ease-out);
 }
 
 /* ── Error toast ──────────────────────────────────────────────────────────── */
 
 .toast {
   position: sticky;
-  bottom: 0;
+  bottom: 0.75rem;
   background: rgba(240, 113, 106, 0.12);
   border: 1px solid rgba(240, 113, 106, 0.35);
   border-radius: var(--radius-sm);
   padding: 0.6rem 0.8rem;
   word-break: break-word;
+  box-shadow: var(--shadow);
+  animation: toast-in 0.35s var(--ease-spring);
+}
+
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(14px) scale(0.97);
+  }
 }
 
 /* ── Responsive: narrow windows (down to the 380px floor) ─────────────────── */
@@ -407,24 +672,5 @@
   .row-actions {
     width: 100%;
     justify-content: flex-end;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .hero-Connecting .hero-dot {
-    animation: none;
-  }
-  .servers li {
-    transition: none;
-  }
-  .search-row,
-  .search-input {
-    transition: none;
-  }
-  /* Drop the breath but keep the glow, so state stays legible — same trade the
-     hero dot makes above. (Alive is already static, so it needs no override.) */
-  .ambient-Connecting {
-    animation: none;
-    opacity: 0.4;
   }
 }

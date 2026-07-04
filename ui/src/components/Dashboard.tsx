@@ -103,7 +103,7 @@ export function Dashboard({ onServersEmptied, onOffline }: Props) {
         onDisconnect={() => act(busyKey.disconnect, disconnect)}
       />
 
-      <section>
+      <section className={styles.serversPanel}>
         <div className={styles.sectionHead}>
           <h2>Servers</h2>
           <span className={styles.headActions}>
@@ -180,54 +180,58 @@ export function Dashboard({ onServersEmptied, onOffline }: Props) {
           </div>
         )}
 
-        <ul className={styles.servers}>
-          {servers.map((s) => (
-            <ServerListItem
-              key={s.name}
-              server={s}
-              busy={busy}
-              editing={editing}
-              editFormRef={editFormRef}
-              onSwitch={() => act(busyKey.switch(s.name), () => switchServer(s.name))}
-              onEdit={() =>
-                act(
-                  busyKey.edit(s.name),
-                  async () => {
-                    const detail = await getServer(s.name);
-                    if (!isMounted()) return;
-                    setAdding(null); // only one form open at a time
-                    setEditing(detail);
-                  },
-                  true, // we only opened a form; no list refresh
-                )
-              }
-              onCopyKey={() => copyKey(s)}
-              onRemove={() =>
-                act(
-                  busyKey.remove(s.name),
-                  async () => {
-                    // removeServer returns the fresh list; apply it directly so we never
-                    // refetch (and never race the parent's unmount when the last is gone).
-                    const left = await removeServer(s.name);
-                    if (left.length === 0) {
-                      onServersEmptied();
-                    } else {
-                      applyServers(left);
-                    }
-                    if (editing?.name === s.name) setEditing(null);
-                  },
-                  true, // we've already updated state; skip the trailing refresh
-                )
-              }
-              onCancelEdit={() => setEditing(null)}
-              onSubmitEdit={async (server) => {
-                await editServer(server);
-                setEditing(null);
-                await refresh();
-              }}
-            />
-          ))}
-        </ul>
+        {/* An empty ul would still paint the panel chrome as a stray hairline. */}
+        {servers.length > 0 && (
+          <ul className={styles.servers}>
+            {servers.map((s, i) => (
+              <ServerListItem
+                key={s.name}
+                server={s}
+                index={i}
+                busy={busy}
+                editing={editing}
+                editFormRef={editFormRef}
+                onSwitch={() => act(busyKey.switch(s.name), () => switchServer(s.name))}
+                onEdit={() =>
+                  act(
+                    busyKey.edit(s.name),
+                    async () => {
+                      const detail = await getServer(s.name);
+                      if (!isMounted()) return;
+                      setAdding(null); // only one form open at a time
+                      setEditing(detail);
+                    },
+                    true, // we only opened a form; no list refresh
+                  )
+                }
+                onCopyKey={() => copyKey(s)}
+                onRemove={() =>
+                  act(
+                    busyKey.remove(s.name),
+                    async () => {
+                      // removeServer returns the fresh list; apply it directly so we never
+                      // refetch (and never race the parent's unmount when the last is gone).
+                      const left = await removeServer(s.name);
+                      if (left.length === 0) {
+                        onServersEmptied();
+                      } else {
+                        applyServers(left);
+                      }
+                      if (editing?.name === s.name) setEditing(null);
+                    },
+                    true, // we've already updated state; skip the trailing refresh
+                  )
+                }
+                onCancelEdit={() => setEditing(null)}
+                onSubmitEdit={async (server) => {
+                  await editServer(server);
+                  setEditing(null);
+                  await refresh();
+                }}
+              />
+            ))}
+          </ul>
+        )}
 
         {servers.length === 0 && !filtering && adding === null && (
           <p className={cx("muted", styles.empty)}>No servers yet. Add one to get connected.</p>

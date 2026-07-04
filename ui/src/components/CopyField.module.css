@@ -4,14 +4,20 @@
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  background: var(--bg);
+  background: var(--field);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   padding: 0.5rem 0.5rem 0.5rem 0.75rem;
+  transition: border-color 0.2s ease;
+}
+
+.copy-field:hover {
+  border-color: var(--border-strong);
 }
 
 .copy-field code {
   flex: 1;
   word-break: break-all;
   user-select: all;
+  color: var(--accent);
 }

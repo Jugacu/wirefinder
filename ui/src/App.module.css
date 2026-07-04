@@ -8,22 +8,27 @@
 }
 
 .spinner {
-  width: 28px;
-  height: 28px;
-  border: 3px solid var(--border);
+  position: relative;
+  width: 44px;
+  height: 44px;
+  border: 2px solid var(--border);
   border-top-color: var(--accent);
   border-radius: 50%;
-  animation: spin 0.8s linear infinite;
+  animation: spin 0.9s linear infinite;
+}
+
+.spinner::after {
+  content: "";
+  position: absolute;
+  inset: 6px;
+  border: 2px solid transparent;
+  border-bottom-color: var(--faint);
+  border-radius: 50%;
+  animation: spin 1.4s linear infinite reverse;
 }
 
 @keyframes spin {
   to {
     transform: rotate(360deg);
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .spinner {
-    animation: none;
   }
 }

@@ -13,23 +13,29 @@
   height: 28px;
   padding: 0;
   border: none;
+  border-radius: 8px;
   background: transparent;
   color: var(--muted);
   cursor: pointer;
   transition:
-    background 0.12s ease,
-    color 0.12s ease;
+    background 0.15s ease,
+    color 0.15s ease;
 }
 
-.trigger:hover,
+.trigger:hover {
+  color: var(--text);
+  background: var(--surface-2);
+}
+
 .trigger[aria-expanded="true"] {
   color: var(--text);
+  background: var(--surface-2);
 }
 
 /* Anchored popup, right-aligned under the trigger, floating above sibling rows. */
 .list {
   position: absolute;
-  top: calc(100% + 4px);
+  top: calc(100% + 6px);
   right: 0;
   z-index: 20;
   min-width: 11rem;
@@ -38,22 +44,32 @@
   padding: 0.3rem;
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
+  border-radius: 12px;
   box-shadow: var(--shadow);
+  transform-origin: top right;
+  animation: menu-pop 0.2s var(--ease-spring);
+}
+
+@keyframes menu-pop {
+  from {
+    opacity: 0;
+    transform: scale(0.9) translateY(-4px);
+  }
 }
 
 .item {
   text-align: left;
   padding: 0.45rem 0.6rem;
   border: none;
-  border-radius: 6px;
+  border-radius: 8px;
   background: transparent;
   color: var(--text);
   font: inherit;
   cursor: pointer;
+  transition: background 0.15s ease;
 }
 
-.item:hover {
+.item:not(:disabled):hover {
   background: rgba(255, 255, 255, 0.06);
 }
 
@@ -62,14 +78,10 @@
   cursor: default;
 }
 
-.item:disabled:hover {
-  background: transparent;
-}
-
 .danger {
   color: var(--danger);
 }
 
-.danger:hover {
+.danger:not(:disabled):hover {
   background: rgba(240, 113, 106, 0.12);
 }

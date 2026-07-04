@@ -1,4 +1,4 @@
-import type { Ref } from "react";
+import type { CSSProperties, Ref } from "react";
 import type { ServerDetail, ServerInfo, ServerSpec } from "../api";
 import { cx } from "../lib/cx";
 import styles from "./Dashboard.module.css";
@@ -16,6 +16,8 @@ function switchButtonLabel(s: ServerInfo, busy: string | null): string {
 
 interface Props {
   server: ServerInfo;
+  /** Position in the list — drives the staggered entrance animation delay. */
+  index: number;
   /** The key of the action currently in flight across the dashboard, or null. */
   busy: string | null;
   /** The server being edited (its secret-free detail), or null. */
@@ -35,6 +37,7 @@ interface Props {
  *  when this row is being edited. */
 export function ServerListItem({
   server: s,
+  index,
   busy,
   editing,
   editFormRef,
@@ -48,11 +51,16 @@ export function ServerListItem({
   const isEditing = editing?.name === s.name;
 
   return (
-    <li className={s.active ? styles.active : undefined}>
+    <li className={s.active ? styles.active : undefined} style={{ "--i": index } as CSSProperties}>
       <div className={styles.serverRow}>
-        <span className={styles.dot} aria-hidden>
-          {s.active ? "●" : "○"}
-        </span>
+        <span
+          className={cx(
+            styles.dot,
+            s.active && styles.dotActive,
+            s.state === "Connecting" && styles.dotConnecting,
+          )}
+          aria-hidden
+        />
         <span className={styles.serverMeta}>
           <span className={styles.name}>{s.name}</span>
           <span className={styles.endpoint}>{s.endpoint}</span>
@@ -61,7 +69,12 @@ export function ServerListItem({
         <span className={styles.rowActions}>
           <button
             type="button"
-            className={cx(shared.btn, shared.primary, shared.small)}
+            className={cx(
+              shared.btn,
+              shared.primary,
+              shared.small,
+              busy === busyKey.switch(s.name) && shared.busy,
+            )}
             disabled={s.active || busy !== null}
             onClick={onSwitch}
           >

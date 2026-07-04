@@ -3,8 +3,10 @@
    app-wide text utilities. Component styles live in co-located *.module.css
    files; only genuinely document-level rules belong here.
 
-   A calm, dark, single-window desktop app. One accent colour (teal) carries the
-   "connected" meaning; everything else stays quiet so state reads at a glance.
+   A calm, dark, single-window desktop app on an indigo "horizon" background
+   (dark top, light pooling low). One solid cyan carries the "connected"
+   meaning; amber is "in flight"; everything else stays quiet so state reads
+   at a glance.
    ─────────────────────────────────────────────────────────────────────────── */
 
 /* ── Geist (self-hosted, no CDN) ─────────────────────────────────────────────
@@ -58,18 +60,23 @@
 :root {
   --bg: #323159;
   --surface: #202745;
-  --surface-2: #202745;
+  --surface-2: #283052;
+  --field: #323159;
   --border: #265885;
+  --border-strong: #35719f;
   --text: #e6edf3;
   /* ~4.7:1 on --surface — meets WCAG AA for the abundant small/muted text. */
   --muted: #9fb0bd;
+  --faint: #56646f;
   --accent: #36c6e6;
-  --accent-dim: #134e4a;
+  --accent-ink: #03201c;
   --warn: #e0a83a;
   --danger: #f0716a;
-  --radius: 12px;
-  --radius-sm: 8px;
+  --radius: 16px;
+  --radius-sm: 10px;
   --shadow: 0 8px 30px rgba(0, 0, 0, 0.35);
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
   color-scheme: dark;
 }
 
@@ -86,17 +93,34 @@ body,
 
 body {
   font-family: "Geist", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-  background: linear-gradient(#2c2d46, #494a71);
-  /* The gradient is a finite 900×500 image; without these it tiles down the page
-     once content (e.g. an open form) makes the document taller than the window.
-     no-repeat stops the tiling; fixed anchors the glow to the viewport's
-     top-right so it stays put on scroll. */
+  background:
+    radial-gradient(120% 45% at 50% 108%, #63649e 0%, rgba(99, 100, 158, 0) 65%),
+    linear-gradient(#232338 0%, #2a2b44 55%, #4a4b7a 100%);
+  /* The gradients are finite images; without these they tile down the page once
+     content (e.g. an open form) makes the document taller than the window.
+     no-repeat stops the tiling; fixed anchors them to the viewport on scroll. */
   background-repeat: no-repeat;
   background-attachment: fixed;
   color: var(--text);
   -webkit-font-smoothing: antialiased;
   font-size: 15px;
   line-height: 1.5;
+  overflow-x: hidden;
+}
+
+::selection {
+  background: rgba(54, 198, 230, 0.3);
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.14);
+  border-radius: 99px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.26);
 }
 
 h1 {
@@ -117,7 +141,7 @@ code {
 
 code.block {
   display: block;
-  background: var(--bg);
+  background: var(--field);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   padding: 0.6rem 0.75rem;
@@ -140,4 +164,19 @@ code.block {
   color: var(--danger);
   font-size: 0.88rem;
   margin: 0;
+}
+
+/* ── Reduced motion ───────────────────────────────────────────────────────── */
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    /* biome-ignore lint/complexity/noImportantStyles: must outrank every component-level animation. */
+    animation-duration: 0.01ms !important;
+    /* biome-ignore lint/complexity/noImportantStyles: must outrank every component-level animation. */
+    animation-iteration-count: 1 !important;
+    /* biome-ignore lint/complexity/noImportantStyles: must outrank every component-level transition. */
+    transition-duration: 0.01ms !important;
+  }
 }
