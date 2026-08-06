@@ -31,11 +31,20 @@
 //! the host already has a more specific route for unreachable through the tunnel —
 //! see [`split_route_prefixes`]. `switch` therefore follows routing with
 //! [`WgOps::sync_split_routes`], which owns those routes the way wg-quick does.
+//!
+//! ## The packet filter (the other half of wg-quick's `add_default`)
+//!
+//! Policy routing alone leaves two holes defguard does not plug, both of which
+//! wg-quick closes with nftables. [`nft_script`] builds the equivalent ruleset and
+//! [`WgOps::apply_firewall`] installs it on every switch (the rules name the tunnel
+//! address, which changes per server); [`WgOps::clear_firewall`] retires it on
+//! disconnect, since `remove_interface` knows nothing about our table.
 
 use std::env;
+use std::io::Write;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, ToSocketAddrs};
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 use std::str::FromStr;
 use std::sync::mpsc;
 use std::time::{Duration, SystemTime};
@@ -107,6 +116,14 @@ pub trait WgOps {
     /// replacing the ones installed for the previously active server. Fills the gap
     /// `configure_peer_routing` leaves (see [`split_route_prefixes`]).
     fn sync_split_routes(&self, prefixes: &[IpAddrMask]) -> Result<(), String>;
+    /// Install the packet-filter rules guarding `addresses` (this tunnel's own
+    /// addresses) and, when `fwmark` is known, the connmark rules that keep a UDP
+    /// flow's mark sticky. Replaces any ruleset from the previous server — see
+    /// [`nft_script`].
+    fn apply_firewall(&self, addresses: &[IpAddrMask], fwmark: Option<u32>) -> Result<(), String>;
+    /// Retire that ruleset entirely. The counterpart to `apply_firewall`, called only
+    /// from `disconnect` — nothing else should leave the tunnel address unguarded.
+    fn clear_firewall(&self) -> Result<(), String>;
     fn configure_dns(&self, dns: &[IpAddr], search_domains: &[&str]) -> Result<(), String>;
     /// Restore the system resolver by removing the tunnel's resolvconf entry.
     /// defguard's `configure_dns(&[])` is a no-op and its `clear_dns` is private,
@@ -296,6 +313,85 @@ fn network_prefix(prefix: &IpAddrMask) -> IpAddrMask {
     IpAddrMask::new(address, prefix.cidr)
 }
 
+/// Our nftables table name, one per address family. Everything we install lives
+/// inside it, so the whole ruleset is replaced or retired as a unit.
+const NFT_TABLE: &str = "wirefinder";
+/// wg-quick's hook priorities, kept numeric and identical to it: `raw` (-300) for the
+/// anti-spoof drop, `mangle` (-150) for the connmark pair.
+const NFT_PRIORITY_RAW: i32 = -300;
+const NFT_PRIORITY_MANGLE: i32 = -150;
+
+/// The nftables ruleset guarding the tunnel, as a script for `nft -f -`. Pure, so the
+/// exact rules are unit-tested without root or a live interface.
+///
+/// Two things, both lifted from wg-quick's `add_default`, neither of which defguard
+/// installs:
+///
+/// 1. **Anti-spoofing.** Linux uses the weak host model: an address belongs to the
+///    HOST, not an interface, so a packet addressed to the tunnel address but arriving
+///    on the LAN is accepted as though it came through the tunnel. Anyone on the local
+///    segment can therefore reach whatever is bound to the tunnel address. `rp_filter`
+///    does not help — it validates the source, not the destination. The `preraw` chain
+///    drops such packets, exempting locally-sourced ones (`fib saddr type != local`) so
+///    the host can still talk to its own tunnel address.
+/// 2. **Sticky marks.** The `premangle`/`postmangle` pair saves the fwmark of outgoing
+///    UDP into conntrack and restores it on the way in, so a reply to a received packet
+///    is not routed into the tunnel. This one matters when the host also SERVES
+///    WireGuard; it needs the fwmark, so it is emitted only when one is known.
+///
+/// We deviate from wg-quick in one deliberate way: wg-quick installs this only for a
+/// full tunnel, because it builds it inside `add_default`. The anti-spoof rule is about
+/// the tunnel ADDRESS, not the routing mode, so it is emitted for a split tunnel too.
+///
+/// Passing no addresses yields a pure teardown script — which is exactly
+/// [`WgOps::clear_firewall`], so both directions share one mechanism.
+fn nft_script(ifname: &str, addresses: &[IpAddrMask], fwmark: Option<u32>) -> String {
+    let mut script = String::new();
+    for (family, want_v6) in [("ip", false), ("ip6", true)] {
+        // `add` then `delete` is the nftables idiom for "delete if it exists"; the
+        // re-declaration below then makes this whole script one atomic replacement,
+        // so the rules are never briefly absent on a switch. A family with no address
+        // gets only the delete — that is how a previous server's table is retired.
+        script.push_str(&format!("add table {family} {NFT_TABLE}\n"));
+        script.push_str(&format!("delete table {family} {NFT_TABLE}\n"));
+
+        let addrs: Vec<&IpAddrMask> = addresses
+            .iter()
+            .filter(|a| a.address.is_ipv6() == want_v6)
+            .collect();
+        if addrs.is_empty() {
+            continue;
+        }
+
+        script.push_str(&format!("table {family} {NFT_TABLE} {{\n"));
+        script.push_str(&format!(
+            "\tchain preraw {{\n\t\ttype filter hook prerouting priority {NFT_PRIORITY_RAW};\n"
+        ));
+        for addr in addrs {
+            // The tunnel's own address, without its prefix length — the /24 in
+            // `Address = 10.0.0.4/24` describes the peer's subnet, not what is ours.
+            script.push_str(&format!(
+                "\t\tiifname != \"{ifname}\" {family} daddr {} fib saddr type != local drop\n",
+                addr.address
+            ));
+        }
+        script.push_str("\t}\n");
+
+        if let Some(mark) = fwmark.filter(|m| *m != 0) {
+            script.push_str(&format!(
+                "\tchain premangle {{\n\t\ttype filter hook prerouting priority \
+                 {NFT_PRIORITY_MANGLE};\n\t\tmeta l4proto udp meta mark set ct mark\n\t}}\n"
+            ));
+            script.push_str(&format!(
+                "\tchain postmangle {{\n\t\ttype filter hook postrouting priority \
+                 {NFT_PRIORITY_MANGLE};\n\t\tmeta l4proto udp mark {mark} ct mark set mark\n\t}}\n"
+            ));
+        }
+        script.push_str("}\n");
+    }
+    script
+}
+
 /// Parse the configured DNS strings into `IpAddr`s. Collecting an iterator of
 /// `Result` into a `Result<Vec<_>, _>` short-circuits on the first bad entry.
 fn parse_dns(server: &ServerConfig) -> Result<Vec<IpAddr>, String> {
@@ -378,15 +474,23 @@ impl<O: WgOps> Wireguard for KernelWireguard<O> {
     fn disconnect(&self) -> Result<(), String> {
         // The ONE place remove_interface is allowed: it tears down the kill-switch
         // rules and DNS on purpose, because the user asked to disconnect entirely.
-        self.ops.remove_interface()
+        let removed = self.ops.remove_interface();
+        // Our nftables table is not defguard's to remove, so retire it here.
+        // Best-effort, and deliberately after: dropping the tunnel is what the user
+        // asked for, and a leftover table matches nothing once the address is gone.
+        if let Err(e) = self.ops.clear_firewall() {
+            eprintln!("wirefinderd: firewall rules not removed: {e}");
+        }
+        removed
     }
 
     fn switch(&self, server: &ServerConfig) -> Result<SocketAddr, String> {
         // Parse FIRST — fail before touching the tunnel.
         let peer = build_peer(server)?;
         let split = split_route_prefixes(&peer);
+        let full_tunnel = peer.allowed_ips.iter().any(|a| a.address.is_unspecified());
         let dns = parse_dns(server)?;
-        parse_addresses(server)?;
+        let addresses = parse_addresses(server)?;
         let endpoint = peer.endpoint.ok_or_else(|| {
             format!(
                 "server '{}': endpoint resolved to no addresses",
@@ -419,6 +523,24 @@ impl<O: WgOps> Wireguard for KernelWireguard<O> {
         // where the PREVIOUS server's prefixes are retired — a stale one would send
         // its traffic into a tunnel whose crypto routing no longer accepts it.
         self.ops.sync_split_routes(&split)?;
+
+        // Then the packet filter. The fwmark comes from the device rather than being
+        // assumed: defguard scans upward from 51820 for a free table, so the value is
+        // only knowable after routing has run.
+        let fwmark = self
+            .ops
+            .read_interface_data()
+            .ok()
+            .and_then(|host| host.fwmark)
+            .filter(|m| *m != 0);
+        if full_tunnel && fwmark.is_none() {
+            eprintln!(
+                "wirefinderd: no fwmark on {INTERFACE_NAME} after routing — \
+                 installing the anti-spoof rules without connmark"
+            );
+        }
+        self.ops.apply_firewall(&addresses, fwmark)?;
+
         self.apply_dns(&dns)?;
         Ok(endpoint)
     }
@@ -483,6 +605,13 @@ impl WgOps for KernelWgOps {
     }
     fn sync_split_routes(&self, prefixes: &[IpAddrMask]) -> Result<(), String> {
         sync_split_routes_via_ip(&self.ifname, prefixes)
+    }
+    fn apply_firewall(&self, addresses: &[IpAddrMask], fwmark: Option<u32>) -> Result<(), String> {
+        run_nft(&nft_script(&self.ifname, addresses, fwmark))
+    }
+    fn clear_firewall(&self) -> Result<(), String> {
+        // No addresses and no fwmark: [`nft_script`] degenerates to the deletes alone.
+        run_nft(&nft_script(&self.ifname, &[], None))
     }
     fn configure_dns(&self, dns: &[IpAddr], search_domains: &[&str]) -> Result<(), String> {
         self.api()?
@@ -610,6 +739,32 @@ fn stale_routes(installed: &[IpAddrMask], wanted: &[IpAddrMask]) -> Vec<IpAddrMa
         .filter(|p| !wanted.contains(p))
         .cloned()
         .collect()
+}
+
+/// Feed a script to `nft -f -`, atomically. We require real `nft` and do NOT keep
+/// wg-quick's `iptables-restore` fallback: on any system new enough to run this,
+/// iptables is an nft front end anyway, and a second firewall path — used rarely,
+/// exercised never — is where a teardown bug would go unnoticed. `nftables` is a
+/// package dependency, so its absence is a broken install and a hard error.
+fn run_nft(script: &str) -> Result<(), String> {
+    let mut child = Command::new("nft")
+        .args(["-f", "-"])
+        .stdin(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("nft: {e}"))?;
+    // Written in a scope so the pipe is closed (EOF) before we wait, and waited on
+    // even when the write failed, so a rejected script can't leave a zombie.
+    let written = {
+        let mut stdin = child.stdin.take().ok_or("nft: stdin unavailable")?;
+        stdin.write_all(script.as_bytes())
+    };
+    let status = child.wait().map_err(|e| format!("nft: {e}"))?;
+    written.map_err(|e| format!("nft: writing ruleset: {e}"))?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!("nft -f exited with {status}"))
+    }
 }
 
 /// Remove the tunnel's resolvconf entry, restoring the system resolver. A faithful
@@ -832,6 +987,11 @@ mod tests {
         SyncSplitRoutes {
             prefixes: Vec<String>,
         },
+        ApplyFirewall {
+            addresses: Vec<String>,
+            fwmark: Option<u32>,
+        },
+        ClearFirewall,
         ConfigureDns {
             servers: Vec<String>,
         },
@@ -891,6 +1051,21 @@ mod tests {
             });
             Ok(())
         }
+        fn apply_firewall(
+            &self,
+            addresses: &[IpAddrMask],
+            fwmark: Option<u32>,
+        ) -> Result<(), String> {
+            self.calls.borrow_mut().push(WgCall::ApplyFirewall {
+                addresses: addresses.iter().map(|a| a.to_string()).collect(),
+                fwmark,
+            });
+            Ok(())
+        }
+        fn clear_firewall(&self) -> Result<(), String> {
+            self.calls.borrow_mut().push(WgCall::ClearFirewall);
+            Ok(())
+        }
         fn configure_dns(&self, dns: &[IpAddr], _search: &[&str]) -> Result<(), String> {
             self.calls.borrow_mut().push(WgCall::ConfigureDns {
                 servers: dns.iter().map(|d| d.to_string()).collect(),
@@ -905,12 +1080,19 @@ mod tests {
                 Ok(())
             }
         }
+        /// A switch reads the device twice — once to pick warm vs cold, once after
+        /// routing for the fwmark — so the LAST scripted result repeats rather than
+        /// running out. That keeps a test scripting only the reads it cares about,
+        /// and mirrors the kernel: a device that was readable stays readable.
         fn read_interface_data(&self) -> Result<Host, String> {
             self.calls.borrow_mut().push(WgCall::ReadInterfaceData);
-            self.reads
-                .borrow_mut()
-                .pop_front()
-                .unwrap_or_else(|| Err("no scripted read".into()))
+            let mut reads = self.reads.borrow_mut();
+            let next = if reads.len() > 1 {
+                reads.pop_front()
+            } else {
+                reads.front().cloned()
+            };
+            next.unwrap_or_else(|| Err("no scripted read".into()))
         }
     }
 
@@ -1149,12 +1331,16 @@ mod tests {
 
     /// `remove_interface` must be confined to `disconnect` — a switch never removes
     /// the interface (that would drop the kill switch). This pins the invariant from
-    /// the only legitimate caller's side: disconnect does exactly one thing.
+    /// the only legitimate caller's side: disconnect drops the tunnel, then the one
+    /// piece of state the kernel won't reclaim on its own (our nftables table).
     #[test]
-    fn disconnect_removes_the_interface_and_nothing_else() {
+    fn disconnect_removes_the_interface_then_clears_the_firewall() {
         let wg = KernelWireguard::with_ops(RecordingWg::new(vec![]));
         wg.disconnect().unwrap();
-        assert_eq!(wg.ops.calls(), vec![WgCall::RemoveInterface]);
+        assert_eq!(
+            wg.ops.calls(),
+            vec![WgCall::RemoveInterface, WgCall::ClearFirewall]
+        );
     }
 
     /// Clearing DNS is best-effort: a failure to remove a (possibly absent)
@@ -1301,6 +1487,136 @@ mod tests {
         );
         assert!(stale_routes(&[], &wanted).is_empty());
         assert_eq!(stale_routes(&installed, &[]).len(), 3);
+    }
+
+    // ── packet filter ────────────────────────────────────────────────────────────
+
+    /// The anti-spoof rule is the whole point: a packet for the tunnel address that
+    /// arrives on any other interface must be dropped, unless it came from this host.
+    #[test]
+    fn nft_script_guards_the_tunnel_address_against_the_local_link() {
+        let addrs = vec![IpAddrMask::from_str("10.0.0.4/24").unwrap()];
+        let script = nft_script("wirefinder", &addrs, Some(51820));
+        assert!(
+            script.contains(
+                "iifname != \"wirefinder\" ip daddr 10.0.0.4 fib saddr type != local drop"
+            ),
+            "{script}"
+        );
+        // The address, not its prefix — the /24 describes the peer's subnet.
+        assert!(!script.contains("10.0.0.4/24"), "{script}");
+        assert!(
+            script.contains("type filter hook prerouting priority -300;"),
+            "{script}"
+        );
+    }
+
+    #[test]
+    fn nft_script_makes_the_fwmark_sticky_across_a_udp_flow() {
+        let addrs = vec![IpAddrMask::from_str("10.0.0.4/24").unwrap()];
+        let script = nft_script("wirefinder", &addrs, Some(51821));
+        // The real fwmark, not an assumed 51820: defguard scans for a free table.
+        assert!(
+            script.contains("meta l4proto udp mark 51821 ct mark set mark"),
+            "{script}"
+        );
+        assert!(
+            script.contains("meta l4proto udp meta mark set ct mark"),
+            "{script}"
+        );
+        assert!(script.contains("priority -150;"), "{script}");
+    }
+
+    /// No fwmark (a split tunnel, or a routing call that assigned none) still gets the
+    /// anti-spoof rule — that one is about the address, not the routing mode — but the
+    /// connmark rules cannot be written without a mark to match.
+    #[test]
+    fn nft_script_without_a_fwmark_keeps_the_anti_spoof_rule_only() {
+        let addrs = vec![IpAddrMask::from_str("10.0.0.4/24").unwrap()];
+        for mark in [None, Some(0)] {
+            let script = nft_script("wirefinder", &addrs, mark);
+            assert!(script.contains("fib saddr type != local drop"), "{script}");
+            assert!(!script.contains("premangle"), "{script}");
+            assert!(!script.contains("postmangle"), "{script}");
+        }
+    }
+
+    #[test]
+    fn nft_script_uses_the_right_family_keyword_for_each_address() {
+        let addrs = vec![
+            IpAddrMask::from_str("10.0.0.4/24").unwrap(),
+            IpAddrMask::from_str("fd00::2/128").unwrap(),
+        ];
+        let script = nft_script("wirefinder", &addrs, Some(51820));
+        assert!(script.contains("table ip wirefinder {"), "{script}");
+        assert!(script.contains("table ip6 wirefinder {"), "{script}");
+        assert!(script.contains("ip daddr 10.0.0.4 "), "{script}");
+        assert!(script.contains("ip6 daddr fd00::2 "), "{script}");
+    }
+
+    /// A v4-only tunnel must still DELETE any ip6 table — that is how the previous
+    /// server's rules are retired when the new one is not dual-stack.
+    #[test]
+    fn nft_script_retires_the_family_a_tunnel_no_longer_uses() {
+        let addrs = vec![IpAddrMask::from_str("10.0.0.4/24").unwrap()];
+        let script = nft_script("wirefinder", &addrs, Some(51820));
+        assert!(script.contains("delete table ip6 wirefinder\n"), "{script}");
+        assert!(!script.contains("table ip6 wirefinder {"), "{script}");
+        // Every family is deleted before being re-declared, in one atomic script, so
+        // the rules are never briefly absent during a switch.
+        let del = script.find("delete table ip wirefinder").unwrap();
+        let decl = script.find("table ip wirefinder {").unwrap();
+        assert!(del < decl, "{script}");
+    }
+
+    /// `clear_firewall` is this same builder with nothing to guard.
+    #[test]
+    fn nft_script_with_no_addresses_is_a_pure_teardown() {
+        let script = nft_script("wirefinder", &[], None);
+        assert_eq!(
+            script,
+            "add table ip wirefinder\ndelete table ip wirefinder\n\
+             add table ip6 wirefinder\ndelete table ip6 wirefinder\n"
+        );
+    }
+
+    #[test]
+    fn switch_applies_the_firewall_after_routing_with_the_devices_fwmark() {
+        let server = valid_server();
+        let calls = run_switch(
+            vec![Ok(live_host(
+                Some(51821),
+                "XhbwkaURz3Tcc2A7TmV89aB+cHOJayNRiSH2My/r1Bk=",
+            ))],
+            &server,
+        );
+        assert!(
+            calls.contains(&WgCall::ApplyFirewall {
+                addresses: vec!["10.0.0.2/24".to_string()],
+                fwmark: Some(51821),
+            }),
+            "{calls:?}"
+        );
+        // After routing (which is what assigns the fwmark) and before DNS.
+        let route = index_of(&calls, |c| matches!(c, WgCall::SyncSplitRoutes { .. })).unwrap();
+        let fw = index_of(&calls, |c| matches!(c, WgCall::ApplyFirewall { .. })).unwrap();
+        assert!(route < fw, "order was {calls:?}");
+        // A switch must never clear the firewall — that is disconnect's job alone.
+        assert!(!calls.contains(&WgCall::ClearFirewall), "{calls:?}");
+    }
+
+    /// An unreadable device after routing must not fail the switch: the anti-spoof
+    /// rules still go in, just without connmark.
+    #[test]
+    fn switch_applies_the_firewall_even_when_the_fwmark_cannot_be_read() {
+        let calls = run_switch(vec![Err("interface down".into())], &valid_server());
+        assert!(
+            calls.contains(&WgCall::ApplyFirewall {
+                addresses: vec!["10.0.0.2/24".to_string()],
+                fwmark: None,
+            }),
+            "{calls:?}"
+        );
     }
 
     // ── resolvconf interface-name parsing (pure) ─────────────────────────────────
