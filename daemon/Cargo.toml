@@ -34,7 +34,7 @@ wirefinder is a WireGuard endpoint switcher: a privileged daemon (wirefinderd) \
 that owns the tunnel interface, a CLI (wirefinder), and a desktop GUI — all in \
 one package. depends="$auto" picks up the GUI's webkit/GTK runtime libraries \
 from the built binary."""
-depends = "$auto"
+depends = "$auto, iproute2"               # the split-route path shells out to `ip`
 recommends = "openresolv"                 # the DNS path shells out to resolvconf
 assets = [
     # Daemon + CLI: built into the workspace target (target/release).

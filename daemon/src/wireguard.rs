@@ -23,9 +23,17 @@
 //! the whole time: during the brief reconfigure window, traffic is DROPPED
 //! (fail-closed), not leaked. `remove_interface` is therefore confined to
 //! `disconnect`, the one moment the user actually wants the tunnel gone.
+//!
+//! ## Split routes (why `configure_peer_routing` isn't enough)
+//!
+//! When defguard sees a default route in the AllowedIPs it installs the kill switch
+//! and adds NO kernel route for the peer's *other* prefixes. That leaves any prefix
+//! the host already has a more specific route for unreachable through the tunnel —
+//! see [`split_route_prefixes`]. `switch` therefore follows routing with
+//! [`WgOps::sync_split_routes`], which owns those routes the way wg-quick does.
 
 use std::env;
-use std::net::{IpAddr, SocketAddr, ToSocketAddrs};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, ToSocketAddrs};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::str::FromStr;
@@ -95,6 +103,10 @@ pub trait WgOps {
     fn remove_interface(&self) -> Result<(), String>;
     fn configure_interface(&self, cfg: &InterfaceConfiguration) -> Result<(), String>;
     fn configure_peer_routing(&self, peers: &[Peer]) -> Result<(), String>;
+    /// Make `prefixes` — and only `prefixes` — the interface's explicit routes,
+    /// replacing the ones installed for the previously active server. Fills the gap
+    /// `configure_peer_routing` leaves (see [`split_route_prefixes`]).
+    fn sync_split_routes(&self, prefixes: &[IpAddrMask]) -> Result<(), String>;
     fn configure_dns(&self, dns: &[IpAddr], search_domains: &[&str]) -> Result<(), String>;
     /// Restore the system resolver by removing the tunnel's resolvconf entry.
     /// defguard's `configure_dns(&[])` is a no-op and its `clear_dns` is private,
@@ -244,6 +256,46 @@ fn build_peer(server: &ServerConfig) -> Result<Peer, String> {
     Ok(peer)
 }
 
+/// The peer's AllowedIPs that need a kernel route of their own: every prefix that
+/// isn't a default route.
+///
+/// defguard's Linux `add_peer_routing` adds routes for the individual AllowedIPs ONLY
+/// when the peer has no default route; the moment it finds `0.0.0.0/0` it installs the
+/// fwmark kill switch instead and drops the rest on the floor, assuming the default
+/// route covers them. It doesn't. The kill switch's main-table rule is
+/// `suppress_prefixlength 0`, which suppresses only the *default* route — so any more
+/// specific route the host already has still wins. A peer offering `192.168.1.0/24`
+/// alongside `0.0.0.0/0` is therefore reached over the LOCAL link whenever the host's
+/// own LAN is also `192.168.1.0/24` (the common case for a home-router peer): the
+/// tunnel is up, the traffic just never enters it.
+///
+/// wg-quick has no such gap — it routes every non-default AllowedIP out of the
+/// interface explicitly. Those routes land in the main table with metric 0, beating a
+/// LAN route from DHCP (metric 100/600). This mirrors that.
+fn split_route_prefixes(peer: &Peer) -> Vec<IpAddrMask> {
+    peer.allowed_ips
+        .iter()
+        // `is_unspecified` (not `cidr == 0`) is exactly how defguard decides a prefix
+        // is a default route, so this keeps precisely what it skipped.
+        .filter(|ip| !ip.address.is_unspecified())
+        .map(network_prefix)
+        .collect()
+}
+
+/// `prefix` with its host bits cleared. WireGuard tolerates an AllowedIP written as
+/// `192.168.1.5/24` (the kernel masks it for crypto routing) but `ip route` rejects it,
+/// and the kernel reports routes back masked — so canonicalising here is what keeps
+/// such a config working AND keeps [`stale_routes`] comparing like with like.
+fn network_prefix(prefix: &IpAddrMask) -> IpAddrMask {
+    let address = match (prefix.address, prefix.mask()) {
+        (IpAddr::V4(a), IpAddr::V4(m)) => Ipv4Addr::from(u32::from(a) & u32::from(m)).into(),
+        (IpAddr::V6(a), IpAddr::V6(m)) => Ipv6Addr::from(u128::from(a) & u128::from(m)).into(),
+        // `mask()` always returns the address's own family; unreachable in practice.
+        _ => prefix.address,
+    };
+    IpAddrMask::new(address, prefix.cidr)
+}
+
 /// Parse the configured DNS strings into `IpAddr`s. Collecting an iterator of
 /// `Result` into a `Result<Vec<_>, _>` short-circuits on the first bad entry.
 fn parse_dns(server: &ServerConfig) -> Result<Vec<IpAddr>, String> {
@@ -332,6 +384,7 @@ impl<O: WgOps> Wireguard for KernelWireguard<O> {
     fn switch(&self, server: &ServerConfig) -> Result<SocketAddr, String> {
         // Parse FIRST — fail before touching the tunnel.
         let peer = build_peer(server)?;
+        let split = split_route_prefixes(&peer);
         let dns = parse_dns(server)?;
         parse_addresses(server)?;
         let endpoint = peer.endpoint.ok_or_else(|| {
@@ -362,6 +415,10 @@ impl<O: WgOps> Wireguard for KernelWireguard<O> {
         // (Re)assert the custom-table default route for the new peer. Must follow
         // configure_interface; the persistent ip rules mean the gap is fail-closed.
         self.ops.configure_peer_routing(&[peer])?;
+        // Then this server's non-default prefixes, which the call above skips. Also
+        // where the PREVIOUS server's prefixes are retired — a stale one would send
+        // its traffic into a tunnel whose crypto routing no longer accepts it.
+        self.ops.sync_split_routes(&split)?;
         self.apply_dns(&dns)?;
         Ok(endpoint)
     }
@@ -424,6 +481,9 @@ impl WgOps for KernelWgOps {
             .configure_peer_routing(peers)
             .map_err(|e| e.to_string())
     }
+    fn sync_split_routes(&self, prefixes: &[IpAddrMask]) -> Result<(), String> {
+        sync_split_routes_via_ip(&self.ifname, prefixes)
+    }
     fn configure_dns(&self, dns: &[IpAddr], search_domains: &[&str]) -> Result<(), String> {
         self.api()?
             .configure_dns(dns, search_domains)
@@ -435,6 +495,121 @@ impl WgOps for KernelWgOps {
     fn read_interface_data(&self) -> Result<Host, String> {
         self.api()?.read_interface_data().map_err(|e| e.to_string())
     }
+}
+
+/// The `proto` we tag our own routes with. It marks exactly the routes wirefinder
+/// installed, so reading them back — and deleting the ones a switch retires — can
+/// never touch the kernel's on-link route for the tunnel address (`proto kernel`) or
+/// defguard's default route (a different table entirely).
+const ROUTE_PROTO: &str = "static";
+
+/// Make `prefixes` the interface's explicit main-table routes, retiring ours from the
+/// last switch. Implemented by shelling out to `ip` — defguard's netlink route helpers
+/// are crate-private, and `iproute2` is the same tool wg-quick uses for this.
+///
+/// Installs BEFORE pruning, so a prefix that BOTH the old and new server carry is never
+/// momentarily route-less: for that instant it would fall back to the main table and go
+/// out the local link, and leaking where we could have not leaked is the thing this
+/// module's ordering exists to avoid. An add is a hard error — a prefix the user asked
+/// for and silently didn't get is the bug this whole path fixes. A delete is
+/// best-effort and logged: it can only fail on a route that is already gone.
+fn sync_split_routes_via_ip(ifname: &str, prefixes: &[IpAddrMask]) -> Result<(), String> {
+    for prefix in prefixes {
+        ip_route("replace", prefix, ifname)?;
+    }
+    for stale in stale_routes(&installed_split_routes(ifname), prefixes) {
+        if let Err(e) = ip_route("del", &stale, ifname) {
+            eprintln!("wirefinderd: stale route {stale} not removed: {e}");
+        }
+    }
+    Ok(())
+}
+
+/// One `ip route <action> <prefix> dev <ifname>` against the main table, tagged as
+/// ours. No metric, so an added route lands at 0 and wins over a DHCP LAN route —
+/// which is what makes an overlapping prefix (the peer's LAN numbered like ours)
+/// reachable through the tunnel at all.
+fn ip_route(action: &str, prefix: &IpAddrMask, ifname: &str) -> Result<(), String> {
+    let dest = prefix.to_string();
+    let status = Command::new("ip")
+        .args([
+            "route",
+            action,
+            &dest,
+            "dev",
+            ifname,
+            "table",
+            "main",
+            "proto",
+            ROUTE_PROTO,
+        ])
+        .status()
+        .map_err(|e| format!("ip route {action} {dest}: {e}"))?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!(
+            "ip route {action} {dest} dev {ifname} exited with {status}"
+        ))
+    }
+}
+
+/// The routes we own on `ifname`, read back from the kernel. Scoped to `proto static`,
+/// so it can only ever return routes wirefinder installed. Best-effort by design: an
+/// `ip` too old for `-j` (pre-4.15), or a missing interface, yields nothing parseable
+/// and degrades to pruning nothing rather than to deleting something else.
+fn installed_split_routes(ifname: &str) -> Vec<IpAddrMask> {
+    ["-4", "-6"]
+        .iter()
+        .flat_map(|family| {
+            let out = Command::new("ip")
+                .args([
+                    family,
+                    "-j",
+                    "route",
+                    "show",
+                    "table",
+                    "main",
+                    "dev",
+                    ifname,
+                    "proto",
+                    ROUTE_PROTO,
+                ])
+                .output();
+            let stdout = match out {
+                Ok(o) if o.status.success() => o.stdout,
+                _ => Vec::new(),
+            };
+            parse_ip_route_prefixes(&String::from_utf8_lossy(&stdout))
+        })
+        .collect()
+}
+
+/// Pull the destinations out of `ip -j route show` output. `dst` is a CIDR, a bare
+/// address for a host route, or the literal `"default"` — the first two parse (bare
+/// addresses as /32 or /128, matching the kernel), and a default route is never ours.
+/// Pure, so it is unit-tested against real `ip` output without invoking `ip`.
+fn parse_ip_route_prefixes(json: &str) -> Vec<IpAddrMask> {
+    #[derive(serde::Deserialize)]
+    struct Entry {
+        dst: Option<String>,
+    }
+    serde_json::from_str::<Vec<Entry>>(json)
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|e| IpAddrMask::from_str(e.dst?.trim()).ok())
+        .collect()
+}
+
+/// Which of the routes we own are no longer wanted. Pure. Both sides are network
+/// prefixes ([`network_prefix`]) — the kernel reports them masked, so canonicalising
+/// what we install is what makes this comparison meaningful.
+fn stale_routes(installed: &[IpAddrMask], wanted: &[IpAddrMask]) -> Vec<IpAddrMask> {
+    installed
+        .iter()
+        .filter(|p| !wanted.contains(p))
+        .cloned()
+        .collect()
 }
 
 /// Remove the tunnel's resolvconf entry, restoring the system resolver. A faithful
@@ -654,6 +829,9 @@ mod tests {
         ConfigurePeerRouting {
             peer_keys: Vec<String>,
         },
+        SyncSplitRoutes {
+            prefixes: Vec<String>,
+        },
         ConfigureDns {
             servers: Vec<String>,
         },
@@ -704,6 +882,12 @@ mod tests {
         fn configure_peer_routing(&self, peers: &[Peer]) -> Result<(), String> {
             self.calls.borrow_mut().push(WgCall::ConfigurePeerRouting {
                 peer_keys: peers.iter().map(|p| p.public_key.to_string()).collect(),
+            });
+            Ok(())
+        }
+        fn sync_split_routes(&self, prefixes: &[IpAddrMask]) -> Result<(), String> {
+            self.calls.borrow_mut().push(WgCall::SyncSplitRoutes {
+                prefixes: prefixes.iter().map(|p| p.to_string()).collect(),
             });
             Ok(())
         }
@@ -988,6 +1172,135 @@ mod tests {
             "reset_dns failure must not fail the switch"
         );
         assert!(wg.ops.calls().contains(&WgCall::ResetDns));
+    }
+
+    // ── split routes ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn split_route_prefixes_keeps_only_the_non_default_prefixes() {
+        let mut server = valid_server();
+        server.allowed_ips = vec![
+            "192.168.1.0/24".into(),
+            "0.0.0.0/0".into(),
+            "::/0".into(),
+            "fd00:beef::/48".into(),
+        ];
+        let prefixes = split_route_prefixes(&build_peer(&server).unwrap());
+        assert_eq!(
+            prefixes.iter().map(|p| p.to_string()).collect::<Vec<_>>(),
+            vec!["192.168.1.0/24", "fd00:beef::/48"]
+        );
+    }
+
+    /// The regression this path exists for: a home-router peer that offers its LAN
+    /// alongside a full tunnel. defguard routes only the default route, so without an
+    /// explicit route for `192.168.1.0/24` the host's own identically-numbered LAN
+    /// route wins and that traffic never enters the tunnel.
+    #[test]
+    fn switch_routes_a_peers_lan_prefix_explicitly() {
+        let mut server = valid_server();
+        server.allowed_ips = vec!["192.168.1.0/24".into(), "0.0.0.0/0".into(), "::/0".into()];
+        let calls = run_switch(
+            vec![Ok(live_host(
+                Some(51820),
+                "XhbwkaURz3Tcc2A7TmV89aB+cHOJayNRiSH2My/r1Bk=",
+            ))],
+            &server,
+        );
+        assert!(
+            calls.contains(&WgCall::SyncSplitRoutes {
+                prefixes: vec!["192.168.1.0/24".to_string()],
+            }),
+            "{calls:?}"
+        );
+        // After peer routing: that call is what assigns the fwmark and installs the
+        // rules these routes coexist with.
+        let route = index_of(&calls, |c| matches!(c, WgCall::ConfigurePeerRouting { .. })).unwrap();
+        let split = index_of(&calls, |c| matches!(c, WgCall::SyncSplitRoutes { .. })).unwrap();
+        assert!(route < split, "order was {calls:?}");
+    }
+
+    /// A plain full tunnel has no prefixes of its own, but the sync must still run:
+    /// it is what retires the routes the PREVIOUS server left on the interface.
+    #[test]
+    fn switch_to_a_plain_full_tunnel_still_syncs_an_empty_route_set() {
+        let server = valid_server(); // allowed_ips = 0.0.0.0/0
+        let calls = run_switch(
+            vec![Ok(live_host(
+                Some(51820),
+                "XhbwkaURz3Tcc2A7TmV89aB+cHOJayNRiSH2My/r1Bk=",
+            ))],
+            &server,
+        );
+        assert!(
+            calls.contains(&WgCall::SyncSplitRoutes { prefixes: vec![] }),
+            "{calls:?}"
+        );
+    }
+
+    /// A config written with host bits set still has to produce a route `ip route`
+    /// accepts — and one that compares equal to what the kernel reports back.
+    #[test]
+    fn split_route_prefixes_are_canonical_network_addresses() {
+        let mut server = valid_server();
+        server.allowed_ips = vec![
+            "192.168.1.5/24".into(),
+            "10.1.2.3/8".into(),
+            "fd00:beef::1/48".into(),
+            "0.0.0.0/0".into(),
+        ];
+        let prefixes = split_route_prefixes(&build_peer(&server).unwrap());
+        assert_eq!(
+            prefixes.iter().map(|p| p.to_string()).collect::<Vec<_>>(),
+            vec!["192.168.1.0/24", "10.0.0.0/8", "fd00:beef::/48"]
+        );
+        // A host route and a /0 are already canonical.
+        let host = IpAddrMask::from_str("10.5.5.5/32").unwrap();
+        assert_eq!(network_prefix(&host).to_string(), "10.5.5.5/32");
+    }
+
+    /// Real `ip -j route show table main dev wirefinder proto static` output, plus the
+    /// two forms that must be tolerated: a bare host address, and `"default"`.
+    #[test]
+    fn ip_route_json_yields_the_prefixes_it_lists() {
+        let json = r#"[{"dst":"192.168.1.0/24","protocol":"static","scope":"link","flags":[]},
+                       {"dst":"10.5.5.5","protocol":"static","scope":"link","flags":[]},
+                       {"dst":"default","protocol":"static","flags":[]}]"#;
+        assert_eq!(
+            parse_ip_route_prefixes(json)
+                .iter()
+                .map(|p| p.to_string())
+                .collect::<Vec<_>>(),
+            // "default" is not ours to delete, so it is not reported.
+            vec!["192.168.1.0/24", "10.5.5.5/32"]
+        );
+    }
+
+    /// Anything unparseable (an `ip` with no `-j`, an absent interface, empty output)
+    /// must prune NOTHING rather than guess.
+    #[test]
+    fn unparseable_ip_output_yields_no_prefixes() {
+        for junk in ["", "Cannot find device \"wirefinder\"", "[]", "not json"] {
+            assert!(parse_ip_route_prefixes(junk).is_empty(), "{junk:?}");
+        }
+    }
+
+    #[test]
+    fn stale_routes_are_the_ones_the_new_server_does_not_want() {
+        let p = |s: &str| IpAddrMask::from_str(s).unwrap();
+        let installed = vec![p("192.168.1.0/24"), p("10.8.0.0/16"), p("fd00::/48")];
+        let wanted = vec![p("192.168.1.0/24"), p("172.16.0.0/12")];
+        assert_eq!(
+            stale_routes(&installed, &wanted)
+                .iter()
+                .map(|r| r.to_string())
+                .collect::<Vec<_>>(),
+            // The shared prefix is kept (never deleted, so never briefly route-less);
+            // a wanted prefix that isn't installed yet is not a deletion.
+            vec!["10.8.0.0/16", "fd00::/48"]
+        );
+        assert!(stale_routes(&[], &wanted).is_empty());
+        assert_eq!(stale_routes(&installed, &[]).len(), 3);
     }
 
     // ── resolvconf interface-name parsing (pure) ─────────────────────────────────
